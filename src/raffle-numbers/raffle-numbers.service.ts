@@ -15,10 +15,17 @@ export class RaffleNumbersService {
   }
 
   findEligibleForDraw() {
+    // Elegible = el pago del pedido fue verificado alguna vez y el pedido no fue
+    // cancelado despues; esto se evalua contra payment_transactions.verified en
+    // lugar de orders.status, porque ese status sigue avanzando (IN_ROUTE,
+    // DELIVERED...) despues de la verificacion, a medida que avanza la entrega.
     return this.prisma.raffleNumber.findMany({
       where: {
         drawnAsWinner: false,
-        order: { status: OrderStatus.PAYMENT_VERIFIED },
+        order: {
+          status: { not: OrderStatus.CANCELLED },
+          paymentTransaction: { verified: true },
+        },
       },
       select: { id: true, number: true, orderId: true },
       orderBy: { number: 'asc' },
