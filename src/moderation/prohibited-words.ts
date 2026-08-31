@@ -1,0 +1,26 @@
+// Lista base de palabras/frases prohibidas en espanol para el filtro KEYWORD_FILTER.
+// Ver seccion 3.2 del SDD - punto de partida recomendado, ampliable segun necesidad.
+export const PROHIBITED_WORDS: string[] = [
+  'idiota',
+  'estupido',
+  'estupida',
+  'imbecil',
+  'pendejo',
+  'pendeja',
+  'marica',
+  'maricon',
+  'puta',
+  'puto',
+  'perra',
+  'zorra',
+  'mierda',
+  'cabron',
+  'cabrona',
+  'hijueputa',
+  'hijodeputa',
+  'malparido',
+  'malparida',
+  'gonorrea',
+  'verga',
+  'coño',
+];
