@@ -1,0 +1,190 @@
+// Prisma schema - Paloma Mensajera
+// Nota: el conector SQLite no soporta enums nativos de Prisma; los campos de
+// tipo "enumerado" se modelan como String y se validan en la capa de aplicacion
+// (DTOs con class-validator) contra los enums de TypeScript en src/common/enums.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Role {
+  id          String           @id @default(uuid())
+  name        String           @unique
+  slug        String           @unique
+  isSystem    Boolean          @default(false)
+  createdAt   DateTime         @default(now())
+  permissions RolePermission[]
+  users       User[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id       String           @id @default(uuid())
+  slug     String           @unique
+  resource String
+  action   String
+  roles    RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model User {
+  id        String    @id @default(uuid())
+  email     String    @unique
+  name      String
+  password  String
+  isActive  Boolean   @default(true)
+  expiresAt DateTime?
+  roleId    String
+  role      Role      @relation(fields: [roleId], references: [id])
+  createdAt DateTime  @default(now())
+
+  verifiedPayments    PaymentTransaction[] @relation("VerifiedBy")
+  deliveryAssignments DeliveryAssignment[] @relation("DeliveryPerson")
+  drawRounds          DrawRound[]          @relation("DrawnBy")
+
+  @@map("users")
+}
+
+model Product {
+  id       String      @id @default(uuid())
+  name     String      @unique
+  type     String
+  price    Float
+  stock    Int
+  isActive Boolean     @default(true)
+  items    OrderItem[]
+
+  @@map("products")
+}
+
+model RaffleNumber {
+  id            String      @id @default(uuid())
+  number        Int         @unique
+  status        String      @default("AVAILABLE")
+  orderId       String?     @unique
+  order         Order?      @relation(fields: [orderId], references: [id])
+  drawnAsWinner Boolean     @default(false)
+  drawBatchId   String?
+  drawnAt       DateTime?
+  createdAt     DateTime    @default(now())
+  drawRounds    DrawRound[]
+
+  @@map("raffle_numbers")
+}
+
+model Order {
+  id                 String   @id @default(uuid())
+  orderCode          String   @unique
+  status              String  @default("PAYMENT_PENDING")
+  totalAmount        Float
+  salesChannel       String
+  assistedBySellerId String?
+  createdAt          DateTime @default(now())
+
+  items               OrderItem[]
+  deliveryDetail      DeliveryDetail?
+  paymentTransaction  PaymentTransaction?
+  raffleNumber        RaffleNumber?
+  deliveryAssignments DeliveryAssignment[]
+  drawRounds          DrawRound[]
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id        String  @id @default(uuid())
+  orderId   String
+  productId String
+  quantity  Int
+  unitPrice Float
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id])
+
+  @@map("order_items")
+}
+
+model DeliveryDetail {
+  id                      String  @id @default(uuid())
+  orderId                 String  @unique
+  order                   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  buyerName               String
+  buyerEmail              String
+  buyerPhone              String
+  recipientName           String
+  recipientTeamsUser      String
+  letterContent           String
+  isAnonymous             Boolean @default(false)
+  contentModerationMethod String
+  teamsNotificationSent   Boolean @default(false)
+  teamsGraphMessageId     String?
+
+  @@map("delivery_details")
+}
+
+model PaymentTransaction {
+  id                String    @id @default(uuid())
+  orderId           String    @unique
+  order             Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  paymentMethod     String    @default("NEQUI")
+  verified          Boolean   @default(false)
+  verifiedByUserId  String?
+  verifiedByUser    User?     @relation("VerifiedBy", fields: [verifiedByUserId], references: [id])
+  verifiedAt        DateTime?
+  verificationNotes String?
+
+  @@map("payment_transactions")
+}
+
+model DeliveryAssignment {
+  id                   String    @id @default(uuid())
+  orderId              String
+  order                Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  deliveryPersonId     String
+  deliveryPerson       User      @relation("DeliveryPerson", fields: [deliveryPersonId], references: [id])
+  status               String    @default("IN_ROUTE")
+  assignedAt           DateTime  @default(now())
+  deliveredAt          DateTime?
+  receivedBy           String?
+  teamsConfirmationLog String?
+  notes                String?
+
+  @@map("delivery_assignments")
+}
+
+model DrawRound {
+  id             String       @id @default(uuid())
+  drawBatchId    String
+  raffleNumberId String
+  raffleNumber   RaffleNumber @relation(fields: [raffleNumberId], references: [id])
+  orderId        String
+  order          Order        @relation(fields: [orderId], references: [id])
+  drawnAt        DateTime     @default(now())
+  drawnByAdminId String
+  drawnByAdmin   User         @relation("DrawnBy", fields: [drawnByAdminId], references: [id])
+
+  @@map("draw_rounds")
+}
+
+model AppSettings {
+  id               String @id @default("singleton")
+  notificationMode String @default("MANUAL")
+
+  @@map("app_settings")
+}
