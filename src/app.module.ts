@@ -10,6 +10,7 @@ import { RolesModule } from './roles/roles.module';
 import { ProductsModule } from './products/products.module';
 import { RaffleNumbersModule } from './raffle-numbers/raffle-numbers.module';
 import { SettingsModule } from './settings/settings.module';
+import { OrdersModule } from './orders/orders.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { SettingsModule } from './settings/settings.module';
     ProductsModule,
     RaffleNumbersModule,
     SettingsModule,
+    OrdersModule,
   ],
   controllers: [AppController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
