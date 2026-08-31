@@ -1,7 +1,9 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { PERMISSIONS_KEY } from '../../common/decorators/permissions.decorator';
+import { ADMIN_ONLY_KEY } from '../../common/decorators/admin-only.decorator';
 import { Permissions } from '../../common/enums/permissions';
+import { RoleSlug } from '../../common/enums/domain.enums';
 import { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface';
 
 @Injectable()
@@ -13,8 +15,12 @@ export class PermissionsGuard implements CanActivate {
       context.getHandler(),
       context.getClass(),
     ]);
+    const adminOnly = this.reflector.getAllAndOverride<boolean>(ADMIN_ONLY_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
 
-    if (!requiredPermissions || requiredPermissions.length === 0) {
+    if ((!requiredPermissions || requiredPermissions.length === 0) && !adminOnly) {
       return true;
     }
 
@@ -25,7 +31,11 @@ export class PermissionsGuard implements CanActivate {
       throw new ForbiddenException('No autenticado.');
     }
 
-    const hasAllPermissions = requiredPermissions.every((permission) =>
+    if (adminOnly && user.roleSlug !== RoleSlug.ADMIN) {
+      throw new ForbiddenException('Esta accion requiere el rol de administrador.');
+    }
+
+    const hasAllPermissions = (requiredPermissions ?? []).every((permission) =>
       user.permissions.includes(permission),
     );
 
