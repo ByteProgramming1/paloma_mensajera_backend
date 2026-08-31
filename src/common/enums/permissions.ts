@@ -15,7 +15,11 @@ export enum Permissions {
   USERS_MANAGE_TEMP = 'users:manage_temp',
 }
 
-export const PERMISSION_DEFINITIONS: Array<{ slug: Permissions; resource: string; action: string }> = [
+export const PERMISSION_DEFINITIONS: Array<{
+  slug: Permissions;
+  resource: string;
+  action: string;
+}> = [
   { slug: Permissions.ORDERS_CREATE_PUBLIC, resource: 'orders', action: 'create_public' },
   { slug: Permissions.ORDERS_READ_ALL, resource: 'orders', action: 'read_all' },
   { slug: Permissions.ORDERS_READ_PAYMENT_INFO, resource: 'orders', action: 'read_payment_info' },

@@ -1,4 +1,9 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ModerationService } from '../moderation/moderation.service';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -117,9 +122,15 @@ export class OrdersService {
 
     return this.prisma.$transaction(async (tx) => {
       if (dto.verified) {
-        await tx.order.update({ where: { id: orderId }, data: { status: OrderStatus.PAYMENT_VERIFIED } });
+        await tx.order.update({
+          where: { id: orderId },
+          data: { status: OrderStatus.PAYMENT_VERIFIED },
+        });
       } else {
-        await tx.order.update({ where: { id: orderId }, data: { status: OrderStatus.PAYMENT_REJECTED } });
+        await tx.order.update({
+          where: { id: orderId },
+          data: { status: OrderStatus.PAYMENT_REJECTED },
+        });
         await tx.raffleNumber.updateMany({
           where: { orderId },
           data: { status: RaffleNumberStatus.AVAILABLE, orderId: null },
@@ -148,7 +159,9 @@ export class OrdersService {
   async assignDelivery(orderId: string, dto: AssignDeliveryDto) {
     const order = await this.findOrderOrThrow(orderId);
     if (order.status !== OrderStatus.PAYMENT_VERIFIED) {
-      throw new BadRequestException('Solo se puede asignar un encargado a pedidos con pago verificado.');
+      throw new BadRequestException(
+        'Solo se puede asignar un encargado a pedidos con pago verificado.',
+      );
     }
 
     return this.prisma.$transaction(async (tx) => {
@@ -198,12 +211,18 @@ export class OrdersService {
   }
 
   async findAllFull() {
-    const orders = await this.prisma.order.findMany({ ...ORDER_WITH_RELATIONS, orderBy: { createdAt: 'desc' } });
+    const orders = await this.prisma.order.findMany({
+      ...ORDER_WITH_RELATIONS,
+      orderBy: { createdAt: 'desc' },
+    });
     return orders.map(serializeOrderFull);
   }
 
   async findAllSafe() {
-    const orders = await this.prisma.order.findMany({ ...ORDER_WITH_RELATIONS, orderBy: { createdAt: 'desc' } });
+    const orders = await this.prisma.order.findMany({
+      ...ORDER_WITH_RELATIONS,
+      orderBy: { createdAt: 'desc' },
+    });
     return orders.map(serializeOrderSafe);
   }
 
@@ -212,9 +231,7 @@ export class OrdersService {
       ...ORDER_WITH_RELATIONS,
       where: {
         status: OrderStatus.PAYMENT_PENDING,
-        ...(search
-          ? { deliveryDetail: { buyerName: { contains: search } } }
-          : {}),
+        ...(search ? { deliveryDetail: { buyerName: { contains: search } } } : {}),
       },
       orderBy: { createdAt: 'asc' },
     });

@@ -69,7 +69,8 @@ export class RaffleNumbersService {
       drawBatchId: batchId,
       drawnAt,
       recipientName: order.deliveryDetail?.recipientName,
-      buyerName: order.deliveryDetail?.isAnonymous && !isAdmin ? undefined : order.deliveryDetail?.buyerName,
+      buyerName:
+        order.deliveryDetail?.isAnonymous && !isAdmin ? undefined : order.deliveryDetail?.buyerName,
       items: order.items.map((item) => ({
         productName: item.product.name,
         quantity: item.quantity,

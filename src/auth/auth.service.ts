@@ -32,11 +32,14 @@ export class AuthService {
     });
   }
 
-  private buildPayload(user: {
-    id: string;
-    email: string;
-    name: string;
-  }, role: Awaited<ReturnType<AuthService['loadRoleWithPermissions']>>): JwtPayload {
+  private buildPayload(
+    user: {
+      id: string;
+      email: string;
+      name: string;
+    },
+    role: Awaited<ReturnType<AuthService['loadRoleWithPermissions']>>,
+  ): JwtPayload {
     return {
       sub: user.id,
       email: user.email,

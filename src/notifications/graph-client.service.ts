@@ -20,7 +20,7 @@ export class GraphClientService {
     });
   }
 
-  async sendChatMessage(userPrincipalName: string, content: string): Promise<string> {
+  async sendChatMessage(userPrincipalName: string, _content: string): Promise<string> {
     if (!this.isConfigured()) {
       this.logger.warn(
         `Microsoft Graph API no esta configurada (pendiente de TI institucional); no se puede notificar a ${userPrincipalName}.`,
