@@ -82,11 +82,25 @@ async function seedAppSettings() {
   });
 }
 
+async function seedRaffleNumbers() {
+  const count = Number(process.env.RAFFLE_NUMBER_COUNT ?? 100);
+  const existing = await prisma.raffleNumber.count();
+  if (existing >= count) {
+    return;
+  }
+
+  const numbersToCreate = Array.from({ length: count - existing }, (_, index) => ({
+    number: existing + index + 1,
+  }));
+  await prisma.raffleNumber.createMany({ data: numbersToCreate });
+}
+
 async function main() {
   await seedPermissions();
   await seedRoles();
   await seedAppSettings();
   await seedAdminUser();
+  await seedRaffleNumbers();
 }
 
 main()

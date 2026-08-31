@@ -20,4 +20,5 @@ export const envValidationSchema = Joi.object({
   GRAPH_API_SCOPE: Joi.string().allow('').optional(),
   ADMIN_SEED_EMAIL: Joi.string().email().optional(),
   ADMIN_SEED_PASSWORD: Joi.string().min(8).optional(),
+  RAFFLE_NUMBER_COUNT: Joi.number().integer().min(1).default(100),
 });
