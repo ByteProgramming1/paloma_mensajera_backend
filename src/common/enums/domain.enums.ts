@@ -50,3 +50,10 @@ export enum RoleSlug {
   SELLER = 'seller',
   DELIVERY = 'delivery',
 }
+
+// PostgreSQL es el motor principal; SQLite es la alternativa liviana para
+// desarrollo local (ver DATABASE_PROVIDER y src/prisma/prisma.service.ts).
+export enum DatabaseProvider {
+  POSTGRESQL = 'postgresql',
+  SQLITE = 'sqlite',
+}

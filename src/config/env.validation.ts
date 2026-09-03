@@ -3,7 +3,16 @@ import * as Joi from 'joi';
 export const envValidationSchema = Joi.object({
   PORT: Joi.number().default(3000),
   NODE_ENV: Joi.string().valid('development', 'production', 'test').default('development'),
-  DATABASE_URL: Joi.string().required(),
+
+  // PostgreSQL es el motor principal; SQLite queda como alternativa liviana
+  // para desarrollo local (ver src/prisma/prisma.service.ts).
+  DATABASE_PROVIDER: Joi.string().valid('postgresql', 'sqlite').default('postgresql'),
+  DATABASE_URL: Joi.string().when('DATABASE_PROVIDER', {
+    is: 'postgresql',
+    then: Joi.required(),
+    otherwise: Joi.string().allow('').optional(),
+  }),
+  SQLITE_DATABASE_URL: Joi.string().default('file:./dev.db'),
   JWT_SECRET: Joi.string().min(16).required(),
   JWT_EXPIRES_IN: Joi.string().default('1d'),
   THROTTLE_TTL: Joi.number().default(60000),
