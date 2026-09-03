@@ -1,6 +1,6 @@
 # Paloma Mensajera - Backend
 
-API del Sistema Integral de Gestion, Ventas y Envios de Paloma Mensajera, construida con NestJS, Prisma y SQLite. El diseno completo del sistema esta documentado en [SDD_Paloma_Mensajera_2.md](SDD_Paloma_Mensajera_2.md).
+API del Sistema Integral de Gestion, Ventas y Envios de Paloma Mensajera, construida con NestJS y Prisma. **PostgreSQL** es el motor de base de datos principal; SQLite queda disponible como alternativa liviana para desarrollo local sin instalar nada. El diseno completo del sistema esta documentado en [SDD_Paloma_Mensajera_2.md](SDD_Paloma_Mensajera_2.md).
 
 ## Requisitos
 
@@ -14,16 +14,30 @@ npm install
 cp .env.example .env
 ```
 
-Ajusta `.env` con tus propios valores (dominio institucional, secreto JWT, credenciales de la semilla del administrador, etc.).
+Ajusta `.env` con tus propios valores (dominio institucional, secreto JWT, credenciales de la semilla del administrador, etc.). `INSTITUTIONAL_EMAIL_DOMAIN` acepta varios dominios separados por coma — la universidad usa `escuelaing.edu.co` para profesores y `mail.escuelaing.edu.co` para estudiantes, y ambos vienen habilitados por defecto en `.env.example`.
 
 ## Base de datos
 
+`DATABASE_PROVIDER` decide el motor activo:
+
+- **`postgresql`** (por defecto, motor principal) - usa `DATABASE_URL` con una cadena de conexion de Postgres.
+- **`sqlite`** - alternativa liviana para desarrollo local sin instalar Postgres; usa `SQLITE_DATABASE_URL` (por defecto `file:./dev.db`, relativo a `prisma/sqlite/`).
+
+Cada motor tiene su propio `schema.prisma` (`prisma/postgresql/` y `prisma/sqlite/`) y su propio cliente generado, porque Prisma fija el proveedor de un datasource en tiempo de generacion. `src/prisma/prisma.service.ts` instancia el cliente correcto segun `DATABASE_PROVIDER` en runtime; el resto de la aplicacion sigue usando `PrismaService` sin diferencias.
+
 ```bash
+# Postgres (motor principal, requiere DATABASE_URL apuntando a una instancia real)
 npm run prisma:migrate
+npm run prisma:seed
+
+# SQLite (alternativa local, requiere DATABASE_PROVIDER=sqlite en .env)
+npm run prisma:migrate:sqlite
 npm run prisma:seed
 ```
 
-El seed crea los permisos y roles nucleares (`admin`, `verifier`, `seller`, `delivery`, `comprador`), el mapa de numeros de rifa y, si `ADMIN_SEED_EMAIL` esta definido en `.env`, un usuario administrador inicial (con `ADMIN_SEED_PASSWORD` opcional, ver seccion siguiente).
+El seed crea los permisos y roles nucleares (`admin`, `verifier`, `seller`, `delivery`, `comprador`), el mapa de numeros de rifa y, si `ADMIN_SEED_EMAIL` esta definido en `.env`, un usuario administrador inicial (con `ADMIN_SEED_PASSWORD` opcional, ver seccion siguiente). Lee `DATABASE_PROVIDER` para conectarse al mismo motor activo.
+
+Si cambias el modelo de datos, aplica el cambio en **ambos** `schema.prisma` y genera una migracion para cada motor (`npm run prisma:migrate` y `npm run prisma:migrate:sqlite`).
 
 ## Inicio de sesion con Microsoft Entra ID
 
@@ -46,13 +60,13 @@ La API queda disponible en `http://localhost:3000` (ver `PORT` en `.env`). `GET 
 
 ## Ejecucion con Docker
 
-El proyecto usa SQLite. Compose persiste la base de datos en un volumen Docker y ejecuta las migraciones y el seed al iniciar la API.
+`docker compose` levanta PostgreSQL (motor principal) junto con la API, persiste los datos en un volumen y ejecuta las migraciones y el seed al iniciar.
 
 ```bash
 docker compose up --build
 ```
 
-La API queda disponible en `http://localhost:3001` (`HOST_PORT` en `.env`). Para detener los contenedores:
+La API queda disponible en `http://localhost:3000` (`HOST_PORT` en `.env`). Las credenciales de Postgres se configuran con `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB` en `.env`. Para detener los contenedores:
 
 ```bash
 docker compose down
@@ -68,5 +82,9 @@ Para eliminar tambien la base de datos persistida, usa `docker compose down -v`.
 | `npm run build` | Compila a `dist/` |
 | `npm run lint` | ESLint + Prettier |
 | `npm test` | Pruebas unitarias |
-| `npm run prisma:migrate` | Aplica migraciones de Prisma |
-| `npm run prisma:seed` | Ejecuta `prisma/seed.ts` |
+| `npm run prisma:generate` | Genera los clientes de Prisma (Postgres y SQLite) |
+| `npm run prisma:migrate` | Aplica migraciones de Prisma (Postgres) |
+| `npm run prisma:migrate:sqlite` | Aplica migraciones de Prisma (SQLite) |
+| `npm run prisma:deploy` | Aplica migraciones en produccion (Postgres) |
+| `npm run prisma:deploy:sqlite` | Aplica migraciones en produccion (SQLite) |
+| `npm run prisma:seed` | Ejecuta `prisma/seed.ts` contra el motor activo (`DATABASE_PROVIDER`) |
