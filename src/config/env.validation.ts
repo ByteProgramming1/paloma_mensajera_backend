@@ -12,6 +12,8 @@ export const envValidationSchema = Joi.object({
   SMTP_PORT: Joi.number().optional(),
   SMTP_USER: Joi.string().allow('').optional(),
   SMTP_PASSWORD: Joi.string().allow('').optional(),
+  // Uno o varios dominios institucionales separados por coma, ej.
+  // "escuelaing.edu.co,mail.escuelaing.edu.co" (profesores vs. estudiantes).
   INSTITUTIONAL_EMAIL_DOMAIN: Joi.string().required(),
   NOTIFICATION_MODE: Joi.string().valid('MANUAL', 'AUTOMATIC').default('MANUAL'),
   GRAPH_TENANT_ID: Joi.string().allow('').optional(),

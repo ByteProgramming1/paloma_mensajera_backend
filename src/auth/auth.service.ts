@@ -19,11 +19,23 @@ export class AuthService {
     private readonly configService: ConfigService,
   ) {}
 
+  // Acepta varios dominios institucionales separados por coma (ej. profesores
+  // en @escuelaing.edu.co, estudiantes en @mail.escuelaing.edu.co).
+  private getInstitutionalDomains(): string[] {
+    return this.configService
+      .get<string>('INSTITUTIONAL_EMAIL_DOMAIN')!
+      .split(',')
+      .map((domain) => domain.trim().toLowerCase())
+      .filter(Boolean);
+  }
+
   private assertInstitutionalEmail(email: string) {
-    const domain = this.configService.get<string>('INSTITUTIONAL_EMAIL_DOMAIN')!;
-    if (!email.toLowerCase().endsWith(`@${domain.toLowerCase()}`)) {
+    const domains = this.getInstitutionalDomains();
+    const normalizedEmail = email.toLowerCase();
+    const isAllowed = domains.some((domain) => normalizedEmail.endsWith(`@${domain}`));
+    if (!isAllowed) {
       throw new ForbiddenException(
-        `Solo se permiten correos institucionales del dominio ${domain}.`,
+        `Solo se permiten correos institucionales de: ${domains.join(', ')}.`,
       );
     }
   }
