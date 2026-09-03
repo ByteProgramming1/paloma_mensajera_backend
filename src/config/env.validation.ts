@@ -18,6 +18,13 @@ export const envValidationSchema = Joi.object({
   GRAPH_CLIENT_ID: Joi.string().allow('').optional(),
   GRAPH_CLIENT_SECRET: Joi.string().allow('').optional(),
   GRAPH_API_SCOPE: Joi.string().allow('').optional(),
+
+  // Inicio de sesion con cuenta institucional de Microsoft (Entra ID / Azure AD).
+  // App registration de tipo SPA/publico usada por el frontend con MSAL para
+  // obtener un id_token, que este backend valida contra el JWKS del tenant.
+  AZURE_AD_TENANT_ID: Joi.string().allow('').optional(),
+  AZURE_AD_CLIENT_ID: Joi.string().allow('').optional(),
+
   ADMIN_SEED_EMAIL: Joi.string().email().optional(),
   ADMIN_SEED_PASSWORD: Joi.string().min(8).optional(),
   RAFFLE_NUMBER_COUNT: Joi.number().integer().min(1).default(100),

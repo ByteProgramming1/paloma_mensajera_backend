@@ -6,6 +6,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { PasswordService } from './password.service';
+import { MicrosoftAuthService } from './microsoft/microsoft-auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { PermissionsGuard } from './guards/permissions.guard';
@@ -26,6 +27,7 @@ import { PermissionsGuard } from './guards/permissions.guard';
   providers: [
     AuthService,
     PasswordService,
+    MicrosoftAuthService,
     JwtStrategy,
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
