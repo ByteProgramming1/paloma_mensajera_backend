@@ -33,6 +33,22 @@ npm run start:dev
 
 La API queda disponible en `http://localhost:3000` (ver `PORT` en `.env`). `GET /health` sirve como chequeo de disponibilidad.
 
+## Ejecucion con Docker
+
+El proyecto usa SQLite. Compose persiste la base de datos en un volumen Docker y ejecuta las migraciones y el seed al iniciar la API.
+
+```bash
+docker compose up --build
+```
+
+La API queda disponible en `http://localhost:3001` (`HOST_PORT` en `.env`). Para detener los contenedores:
+
+```bash
+docker compose down
+```
+
+Para eliminar tambien la base de datos persistida, usa `docker compose down -v`.
+
 ## Scripts
 
 | Script | Descripcion |
