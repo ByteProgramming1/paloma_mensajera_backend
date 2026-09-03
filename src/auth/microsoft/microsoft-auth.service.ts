@@ -20,12 +20,17 @@ export class MicrosoftAuthService {
 
   constructor(private readonly configService: ConfigService) {}
 
+  private getConfigValue(key: 'AZURE_AD_TENANT_ID' | 'AZURE_AD_CLIENT_ID'): string | undefined {
+    const value = this.configService.get<string>(key);
+    return value && value !== 'change_in_production' ? value : undefined;
+  }
+
   private getTenantId(): string | undefined {
-    return this.configService.get<string>('AZURE_AD_TENANT_ID') || undefined;
+    return this.getConfigValue('AZURE_AD_TENANT_ID');
   }
 
   private getClientId(): string | undefined {
-    return this.configService.get<string>('AZURE_AD_CLIENT_ID') || undefined;
+    return this.getConfigValue('AZURE_AD_CLIENT_ID');
   }
 
   private getJwksClient(tenantId: string): JwksClient {

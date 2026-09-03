@@ -3,7 +3,9 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { PasswordService } from './password.service';
+import { MicrosoftAuthService } from './microsoft/microsoft-auth.service';
 import { LoginDto } from './dto/login.dto';
+import { MicrosoftLoginDto } from './dto/microsoft-login.dto';
 import { CreateTemporaryUserDto } from './dto/create-temporary-user.dto';
 import { JwtPayload } from './jwt-payload.interface';
 
@@ -13,6 +15,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly passwordService: PasswordService,
+    private readonly microsoftAuthService: MicrosoftAuthService,
     private readonly configService: ConfigService,
   ) {}
 
@@ -49,6 +52,21 @@ export class AuthService {
     };
   }
 
+  private async issueSession(user: { id: string; email: string; name: string; roleId: string }) {
+    const role = await this.loadRoleWithPermissions(user.roleId);
+    const payload = this.buildPayload(user, role);
+
+    return {
+      accessToken: this.jwtService.sign(payload),
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: role.slug,
+      },
+    };
+  }
+
   async login(dto: LoginDto) {
     this.assertInstitutionalEmail(dto.email);
 
@@ -72,18 +90,39 @@ export class AuthService {
       throw new UnauthorizedException('Credenciales invalidas.');
     }
 
-    const role = await this.loadRoleWithPermissions(user.roleId);
-    const payload = this.buildPayload(user, role);
+    return this.issueSession(user);
+  }
 
-    return {
-      accessToken: this.jwtService.sign(payload),
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: role.slug,
-      },
-    };
+  // Login con la cuenta institucional de Microsoft (Entra ID). No crea cuentas
+  // nuevas: el correo debe haber sido pre-autorizado por un administrador con
+  // POST /auth/temporary-user (o el seed inicial) y tener asignado un rol.
+  async loginWithMicrosoft(dto: MicrosoftLoginDto) {
+    const claims = await this.microsoftAuthService.validateIdToken(dto.idToken);
+    this.assertInstitutionalEmail(claims.email);
+
+    const user = await this.prisma.user.findUnique({ where: { email: claims.email } });
+    if (!user || !user.isActive) {
+      throw new ForbiddenException(
+        'Esta cuenta de Microsoft no esta autorizada. Solicita al administrador que te asigne un rol.',
+      );
+    }
+
+    if (user.expiresAt && user.expiresAt.getTime() < Date.now()) {
+      throw new UnauthorizedException('La cuenta temporal ha expirado.');
+    }
+
+    if (user.microsoftId && user.microsoftId !== claims.microsoftId) {
+      throw new UnauthorizedException('La cuenta de Microsoft no coincide con la registrada.');
+    }
+
+    if (!user.microsoftId) {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { microsoftId: claims.microsoftId },
+      });
+    }
+
+    return this.issueSession(user);
   }
 
   async createTemporaryUser(dto: CreateTemporaryUserDto) {
