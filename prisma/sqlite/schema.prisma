@@ -1,15 +1,20 @@
-// Prisma schema - Paloma Mensajera
+// Prisma schema - Paloma Mensajera (variante SQLite)
+// PostgreSQL (../postgresql/schema.prisma) es el motor principal; SQLite queda
+// disponible como alternativa liviana para desarrollo local sin instalar nada
+// (ver DATABASE_PROVIDER y src/prisma/prisma.service.ts).
 // Nota: el conector SQLite no soporta enums nativos de Prisma; los campos de
 // tipo "enumerado" se modelan como String y se validan en la capa de aplicacion
 // (DTOs con class-validator) contra los enums de TypeScript en src/common/enums.
+// Ambas variantes deben mantenerse con el mismo modelo de datos.
 
 generator client {
   provider = "prisma-client-js"
+  output   = "./generated"
 }
 
 datasource db {
   provider = "sqlite"
-  url      = env("DATABASE_URL")
+  url      = env("SQLITE_DATABASE_URL")
 }
 
 model Role {
