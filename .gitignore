@@ -1,0 +1,38 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+build/
+
+# env
+.env
+.env.*.local
+.env.local
+
+# database
+prisma/dev.db
+prisma/dev.db-journal
+prisma/data/
+*.sqlite
+*.sqlite3
+
+# logs
+logs/
+*.log
+npm-debug.log*
+
+# testing / coverage
+coverage/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/
+
+# misc
+*.tsbuildinfo
