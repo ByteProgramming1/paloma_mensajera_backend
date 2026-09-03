@@ -61,6 +61,12 @@ export class AuthService {
       throw new UnauthorizedException('La cuenta temporal ha expirado.');
     }
 
+    if (!user.password) {
+      throw new UnauthorizedException(
+        'Esta cuenta inicia sesion con la cuenta institucional de Microsoft.',
+      );
+    }
+
     const passwordMatches = await this.passwordService.verify(user.password, dto.password);
     if (!passwordMatches) {
       throw new UnauthorizedException('Credenciales invalidas.');
@@ -88,7 +94,7 @@ export class AuthService {
       throw new UnauthorizedException(`El rol '${dto.roleSlug}' no existe.`);
     }
 
-    const passwordHash = await this.passwordService.hash(dto.password);
+    const passwordHash = dto.password ? await this.passwordService.hash(dto.password) : null;
 
     const user = await this.prisma.user.create({
       data: {

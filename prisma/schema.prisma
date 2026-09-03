@@ -45,15 +45,16 @@ model RolePermission {
 }
 
 model User {
-  id        String    @id @default(uuid())
-  email     String    @unique
-  name      String
-  password  String
-  isActive  Boolean   @default(true)
-  expiresAt DateTime?
-  roleId    String
-  role      Role      @relation(fields: [roleId], references: [id])
-  createdAt DateTime  @default(now())
+  id          String    @id @default(uuid())
+  email       String    @unique
+  name        String
+  password    String?
+  microsoftId String?   @unique
+  isActive    Boolean   @default(true)
+  expiresAt   DateTime?
+  roleId      String
+  role        Role      @relation(fields: [roleId], references: [id])
+  createdAt   DateTime  @default(now())
 
   verifiedPayments    PaymentTransaction[] @relation("VerifiedBy")
   deliveryAssignments DeliveryAssignment[] @relation("DeliveryPerson")

@@ -50,17 +50,18 @@ async function seedRoles() {
 
 async function seedAdminUser() {
   const email = process.env.ADMIN_SEED_EMAIL;
-  const password = process.env.ADMIN_SEED_PASSWORD;
 
-  if (!email || !password) {
-    console.warn(
-      '[seed] ADMIN_SEED_EMAIL / ADMIN_SEED_PASSWORD no configurados: se omite la creacion del admin inicial.',
-    );
+  if (!email) {
+    console.warn('[seed] ADMIN_SEED_EMAIL no configurado: se omite la creacion del admin inicial.');
     return;
   }
 
+  // ADMIN_SEED_PASSWORD es opcional: sin ella, el admin inicial solo puede
+  // iniciar sesion con su cuenta institucional de Microsoft (ver AuthService.loginWithMicrosoft).
+  const password = process.env.ADMIN_SEED_PASSWORD;
+  const passwordHash = password ? await argon2.hash(password, ARGON2ID_OPTIONS) : null;
+
   const adminRole = await prisma.role.findUniqueOrThrow({ where: { slug: 'admin' } });
-  const passwordHash = await argon2.hash(password, ARGON2ID_OPTIONS);
 
   await prisma.user.upsert({
     where: { email },
