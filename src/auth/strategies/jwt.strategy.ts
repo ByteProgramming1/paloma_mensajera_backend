@@ -20,7 +20,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload): Promise<AuthenticatedUser> {
-    const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
+    // El rol de una persona puede rotar varias veces por semana (seccion 6 del
+    // SDD), asi que el claim `roleSlug`/`permissions` del JWT ya emitido no es
+    // fuente de verdad confiable durante toda su vigencia: se re-consulta el
+    // rol y los permisos vigentes en cada request en vez de confiar en el
+    // token (seccion 9.3). `isActive` false invalida la sesion de inmediato,
+    // sin esperar a que el token expire.
+    const user = await this.prisma.user.findUnique({
+      where: { id: payload.sub },
+      include: { role: { include: { permissions: { include: { permission: true } } } } },
+    });
 
     if (!user || !user.isActive) {
       throw new UnauthorizedException('Cuenta inactiva o inexistente.');
@@ -31,11 +40,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     }
 
     return {
-      userId: payload.sub,
-      email: payload.email,
-      name: payload.name,
-      roleSlug: payload.roleSlug,
-      permissions: payload.permissions,
+      userId: user.id,
+      email: user.email,
+      name: user.name,
+      roleSlug: user.role.slug,
+      permissions: user.role.permissions.map((rp) => rp.permission.slug),
     };
   }
 }
