@@ -65,6 +65,16 @@ El acceso institucional se hace con la cuenta de Microsoft de la universidad (En
 
 Sin `AZURE_AD_TENANT_ID`/`AZURE_AD_CLIENT_ID` configurados, `POST /auth/microsoft` responde `503` y el login local por correo/password (`POST /auth/login`) sigue disponible como respaldo para desarrollo — util mientras se gestiona el registro de la app en Azure AD (misma logica de degradacion controlada que la notificacion por Teams, seccion 11 del SDD). Una cuenta creada sin `password` (ver `CreateTemporaryUserDto`) solo puede iniciar sesion con Microsoft.
 
+## Auto-registro con verificacion de correo
+
+Cuando no es posible obtener un registro de app en Microsoft Entra ID (TI no lo autoriza, por ejemplo), el acceso institucional se sigue restringiendo sin depender de Azure AD: **cualquier persona con un correo de los dominios institucionales configurados puede crear su propia cuenta**, probando que realmente tiene acceso a ese buzon mediante un codigo de un solo uso enviado por correo (SMTP), no solo revisando el sufijo del email.
+
+1. `POST /auth/register` con `{ "email", "name", "password" }` (el correo debe terminar en alguno de los dominios de `INSTITUTIONAL_EMAIL_DOMAIN`). Crea (o reutiliza, si aun no se ha verificado) la cuenta con el rol `comprador`, genera un codigo de 6 digitos valido por 15 minutos y lo envia por correo. La respuesta nunca incluye el codigo.
+2. `POST /auth/verify-email` con `{ "email", "code" }`. Si el codigo es correcto y no ha expirado, la cuenta queda verificada (`emailVerifiedAt`) y la respuesta ya incluye la sesion (mismo formato que `POST /auth/login`).
+3. `POST /auth/login` rechaza con `401` a las cuentas con password que aun no verificaron su correo. Las cuentas creadas por un administrador (`POST /auth/temporary-user`) o que inician sesion por primera vez con Microsoft quedan verificadas de inmediato, porque ya hay alguien (o algo) que dio fe de esa identidad.
+
+Requiere las variables `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER` y `SMTP_PASSWORD` en `.env` (puede ser una cuenta de Gmail/Outlook con una "contrasena de aplicacion", o cualquier proveedor SMTP). Sin `SMTP_HOST` configurado, `POST /auth/register` responde `503` en vez de fallar silenciosamente.
+
 ## Ejecucion
 
 ```bash
