@@ -9,7 +9,6 @@ import {
   Query,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import { Public } from '../common/decorators/public.decorator';
 import { RequirePermissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/enums/permissions';
@@ -17,7 +16,6 @@ import { AuthenticatedUser } from '../common/interfaces/authenticated-user.inter
 import { OrdersService } from './orders.service';
 import { TeamsNotificationService } from '../notifications/teams-notification.service';
 import { CreateOrderDto } from './dto/create-order.dto';
-import { ValidateMessageDto } from './dto/validate-message.dto';
 import { VerifyMessageDto } from './dto/verify-message.dto';
 import { SelectRaffleNumberDto } from './dto/select-raffle-number.dto';
 import { VerifyPaymentDto } from './dto/verify-payment.dto';
@@ -32,12 +30,9 @@ export class OrdersController {
     private readonly teamsNotificationService: TeamsNotificationService,
   ) {}
 
-  @Public()
-  @Post('validate-message')
-  validateMessage(@Body() dto: ValidateMessageDto) {
-    return this.ordersService.validateMessage(dto);
-  }
-
+  // No existe POST /orders/validate-message: la dedicatoria ya no pasa por
+  // ningun filtro automatico (seccion 2 del SDD vigente), solo por revision
+  // manual del Vendedor via PATCH /orders/:id/verify-message.
   @RequirePermissions(Permissions.ORDERS_CREATE_PUBLIC)
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   @Post('public')
@@ -55,12 +50,7 @@ export class OrdersController {
   findOrders(@CurrentUser() user: AuthenticatedUser, @Query() query: FindOrdersQueryDto) {
     if (query.view === 'message') {
       this.assertPermission(user, Permissions.MESSAGES_READ_QUEUE);
-      return this.ordersService.findMessageQueue();
-    }
-
-    if (query.view === 'payment') {
-      this.assertPermission(user, Permissions.ORDERS_READ_PAYMENT_INFO);
-      return this.ordersService.findPaymentView(user, query.search);
+      return this.ordersService.findMessageQueue(query.search);
     }
 
     if (query.recipientName) {
@@ -71,6 +61,8 @@ export class OrdersController {
       return this.ordersService.findByRecipientName(query.recipientName);
     }
 
+    // El Administrador siempre usa la vista completa: no hay una vista
+    // restringida de pagos separada (ver seccion 6 del SDD vigente).
     if (user.permissions.includes(Permissions.ORDERS_READ_ALL)) {
       return this.ordersService.findAllFull();
     }

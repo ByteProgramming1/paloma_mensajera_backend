@@ -34,15 +34,22 @@ function baseOrderFields(order: OrderWithRelations) {
   };
 }
 
-// Vista completa, exclusiva del rol admin (seccion 5: visibilidad total sin filtros).
+// Vista completa, exclusiva del rol admin (seccion 6 del SDD vigente): ve todo
+// sin ninguna restriccion de campos - por eso ya no existe un "OrderPaymentView"
+// separado, el admin usa esta misma vista tambien para verificar pagos.
 export function serializeOrderFull(order: OrderWithRelations) {
   return {
     ...baseOrderFields(order),
-    buyerName: order.deliveryDetail?.buyerName,
+    buyerFullName: order.deliveryDetail?.buyerFullName,
     buyerEmail: order.deliveryDetail?.buyerEmail,
     buyerPhone: order.deliveryDetail?.buyerPhone,
-    recipientName: order.deliveryDetail?.recipientName,
+    buyerType: order.deliveryDetail?.buyerType,
+    buyerCareerOrArea: order.deliveryDetail?.buyerCareerOrArea,
+    selfPickup: order.deliveryDetail?.selfPickup,
+    recipientFullName: order.deliveryDetail?.recipientFullName,
+    recipientCareerOrArea: order.deliveryDetail?.recipientCareerOrArea,
     recipientTeamsUser: order.deliveryDetail?.recipientTeamsUser,
+    deliveryNotes: order.deliveryDetail?.deliveryNotes,
     letterContent: order.deliveryDetail?.letterContent,
     isAnonymous: order.deliveryDetail?.isAnonymous,
     teamsNotificationSent: order.deliveryDetail?.teamsNotificationSent,
@@ -58,41 +65,36 @@ export function serializeOrderFull(order: OrderWithRelations) {
   };
 }
 
-// Vista para seller/delivery (orders:read_public_safe): buyerName se omite (no se
-// envia, ni ofuscado ni vacio) cuando el pedido es anonimo - ver HU-05.
+// Vista para el Vendedor (orders:read_public_safe): buyerFullName se omite
+// (no se envia, ni ofuscado ni vacio) cuando el pedido es anonimo - ver HU-06.
 export function serializeOrderSafe(order: OrderWithRelations) {
   const isAnonymous = order.deliveryDetail?.isAnonymous ?? false;
   return {
     ...baseOrderFields(order),
-    ...(isAnonymous ? {} : { buyerName: order.deliveryDetail?.buyerName }),
-    recipientName: order.deliveryDetail?.recipientName,
+    ...(isAnonymous ? {} : { buyerFullName: order.deliveryDetail?.buyerFullName }),
+    selfPickup: order.deliveryDetail?.selfPickup,
+    recipientFullName: order.deliveryDetail?.recipientFullName,
     recipientTeamsUser: order.deliveryDetail?.recipientTeamsUser,
+    deliveryNotes: order.deliveryDetail?.deliveryNotes,
     letterContent: order.deliveryDetail?.letterContent,
     isAnonymous,
     teamsNotificationSent: order.deliveryDetail?.teamsNotificationSent,
   };
 }
 
-// OrderMessageView de la cola del Verificador (seccion 3.2): unicamente la
-// dedicatoria, sin ninguna identidad (ni remitente, ni destinatario, ni carrito).
+// OrderMessagePendingView de la cola del Vendedor (seccion 3.2 del SDD
+// vigente): a diferencia del diseno anterior con Verificador, el Vendedor SI
+// necesita identidad (para poder buscar al comprador por nombre) y contexto
+// de autorrecogida/comentario, no solo el texto de la dedicatoria.
 export function serializeOrderMessageView(order: OrderWithRelations) {
   return {
     orderId: order.id,
     orderCode: order.orderCode,
+    buyerFullName: order.deliveryDetail?.buyerFullName,
+    recipientFullName: order.deliveryDetail?.recipientFullName,
     letterContent: order.deliveryDetail?.letterContent,
-  };
-}
-
-// OrderPaymentView del Verificador (seccion 3.5): unicamente lo necesario para
-// cruzar contra la app de Nequi. Deliberadamente excluye destinatario y dedicatoria.
-export function serializeOrderPaymentView(order: OrderWithRelations) {
-  return {
-    orderId: order.id,
-    orderCode: order.orderCode,
-    buyerName: order.deliveryDetail?.buyerName,
-    buyerPhone: order.deliveryDetail?.buyerPhone,
-    totalAmount: order.totalAmount,
-    paymentMethod: order.paymentTransaction?.paymentMethod,
-    status: order.status,
+    isAnonymous: order.deliveryDetail?.isAnonymous,
+    selfPickup: order.deliveryDetail?.selfPickup,
+    deliveryNotes: order.deliveryDetail?.deliveryNotes,
   };
 }

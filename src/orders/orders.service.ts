@@ -6,9 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { ModerationService } from '../moderation/moderation.service';
 import { CreateOrderDto } from './dto/create-order.dto';
-import { ValidateMessageDto } from './dto/validate-message.dto';
 import { VerifyMessageDto } from './dto/verify-message.dto';
 import { SelectRaffleNumberDto } from './dto/select-raffle-number.dto';
 import { VerifyPaymentDto } from './dto/verify-payment.dto';
@@ -22,13 +20,11 @@ import {
   PaymentMethod,
   RaffleNumberStatus,
   RoleSlug,
-  SalesChannel,
 } from '../common/enums/domain.enums';
 import {
   ORDER_WITH_RELATIONS,
   serializeOrderFull,
   serializeOrderMessageView,
-  serializeOrderPaymentView,
   serializeOrderSafe,
 } from './orders.serializer';
 
@@ -39,25 +35,31 @@ interface ActingUser {
 
 @Injectable()
 export class OrdersService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly moderationService: ModerationService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
-  validateMessage(dto: ValidateMessageDto) {
-    return this.moderationService.moderateMessage(dto.letterContent);
-  }
-
-  // PASO 1: filtro automatico como primer descarte - si pasa, el pedido nace
-  // en MESSAGE_PENDING_REVIEW, a la espera de la revision humana final del
-  // Verificador (seccion 2 y 8.2 del SDD). No se toca stock ni rifa todavia.
+  // Crea el pedido directo en MESSAGE_PENDING_REVIEW - sin ningun filtro
+  // automatico ni IA (seccion 2 y 8.1 del SDD vigente): toda dedicatoria pasa
+  // por revision 100% manual del Vendedor. No se toca stock ni rifa todavia.
   async createPublicOrder(dto: CreateOrderDto) {
-    const filter = await this.moderationService.moderateMessage(dto.letterContent);
-    if (!filter.approved) {
-      throw new BadRequestException(filter.reason ?? 'El mensaje no pudo ser aprobado.');
-    }
-
     const orderSequence = (await this.prisma.order.count()) + 1;
+
+    // Autorrecogida (seccion 3.1): si el comprador recoge su propio regalo,
+    // no existen datos de un destinatario distinto - se copian los suyos. El
+    // formulario no pide un "usuario de Teams" aparte para el comprador (solo
+    // existe para el destinatario en 3.1), asi que se usa su correo
+    // institucional: en Microsoft Teams/365 el UPN (correo) es el identificador
+    // de usuario, por lo que sirve igual para notificarlo por Teams.
+    const recipientData = dto.selfPickup
+      ? {
+          recipientFullName: dto.buyerFullName,
+          recipientCareerOrArea: dto.buyerCareerOrArea,
+          recipientTeamsUser: dto.buyerEmail,
+        }
+      : {
+          recipientFullName: dto.recipientFullName!,
+          recipientCareerOrArea: dto.recipientCareerOrArea,
+          recipientTeamsUser: dto.recipientTeamsUser!,
+        };
 
     return this.prisma.order.create({
       data: {
@@ -67,14 +69,16 @@ export class OrdersService {
         assistedBySellerId: dto.assistedBySellerId ?? null,
         deliveryDetail: {
           create: {
-            buyerName: dto.buyerName,
+            buyerFullName: dto.buyerFullName,
             buyerEmail: dto.buyerEmail,
             buyerPhone: dto.buyerPhone,
-            recipientName: dto.recipientName,
-            recipientTeamsUser: dto.recipientTeamsUser,
+            buyerType: dto.buyerType,
+            buyerCareerOrArea: dto.buyerCareerOrArea,
+            selfPickup: dto.selfPickup,
+            deliveryNotes: dto.selfPickup ? (dto.deliveryNotes ?? null) : null,
             letterContent: dto.letterContent,
             isAnonymous: dto.isAnonymous,
-            contentModerationMethod: filter.method,
+            ...recipientData,
           },
         },
         items: {
@@ -84,15 +88,16 @@ export class OrdersService {
           })),
         },
         messageReview: {
-          create: { automaticFilterMethod: filter.method, automaticFilterPassed: true },
+          create: { humanReviewStatus: HumanReviewStatus.PENDING },
         },
       },
     });
   }
 
-  // PASO 2: revision humana final de la dedicatoria - rol Verificador, unico
-  // gate real que habilita el mapa de rifa (seccion 3.3 y HU-03 del SDD).
-  async verifyMessage(orderId: string, verifierId: string, dto: VerifyMessageDto) {
+  // Revision manual de la dedicatoria - normalmente el Vendedor, quien puede
+  // buscar al comprador por nombre en la cola (ver findMessageQueue). Unico
+  // gate que habilita el mapa de rifa (seccion 3.2 y HU-03 del SDD vigente).
+  async verifyMessage(orderId: string, reviewerId: string, dto: VerifyMessageDto) {
     const order = await this.findOrderOrThrow(orderId);
     if (
       order.status !== OrderStatus.MESSAGE_PENDING_REVIEW &&
@@ -116,7 +121,7 @@ export class OrdersService {
         where: { orderId },
         data: {
           humanReviewStatus: dto.approved ? HumanReviewStatus.APPROVED : HumanReviewStatus.REJECTED,
-          reviewedByUserId: verifierId,
+          reviewedByUserId: reviewerId,
           reviewedAt: new Date(),
           rejectionReason: dto.approved ? null : dto.rejectionReason,
         },
@@ -124,13 +129,13 @@ export class OrdersService {
     });
   }
 
-  // PASO 3: solo con MESSAGE_APPROVED - descuenta stock del carrito, asigna el
-  // numero de rifa de forma atomica y crea el pago pendiente (seccion 8.2).
+  // Solo con MESSAGE_APPROVED - descuenta stock del carrito, asigna el numero
+  // de rifa de forma atomica y crea el pago pendiente (seccion 10.2 del SDD).
   async selectRaffleNumber(orderId: string, dto: SelectRaffleNumberDto) {
     const order = await this.findOrderOrThrow(orderId);
     if (order.status !== OrderStatus.MESSAGE_APPROVED) {
       throw new BadRequestException(
-        'Este pedido aun no tiene la dedicatoria aprobada por el Verificador.',
+        'Este pedido aun no tiene la dedicatoria aprobada por el Vendedor.',
       );
     }
 
@@ -180,23 +185,16 @@ export class OrdersService {
     });
   }
 
-  // Confirma/rechaza el pago. El Verificador puede hacerlo con cualquier
-  // pedido; el Vendedor solo con sus propias ventas presenciales, aunque
-  // tenga el permiso base orders:verify_payment (seccion 3.4 y HU-06 del SDD).
+  // Confirma/rechaza el pago. Tarea EXCLUSIVA del Administrador, sin ningun
+  // alcance para el Vendedor (seccion 3.3, 11.2 y HU-05 del SDD vigente): el
+  // guard de permisos ya bloquea a cualquier otro rol, y este chequeo explicito
+  // es defensa adicional para que nunca dependa solo de como quede la matriz.
   async verifyPayment(orderId: string, actingUser: ActingUser, dto: VerifyPaymentDto) {
-    const order = await this.findOrderOrThrow(orderId);
-
-    if (actingUser.roleSlug === RoleSlug.SELLER) {
-      if (
-        order.salesChannel !== SalesChannel.PRESENCIAL ||
-        order.assistedBySellerId !== actingUser.userId
-      ) {
-        throw new ForbiddenException(
-          'Solo puedes confirmar el pago de ventas presenciales que tu mismo atendiste.',
-        );
-      }
+    if (actingUser.roleSlug !== RoleSlug.ADMIN) {
+      throw new ForbiddenException('Solo el Administrador puede confirmar o rechazar un pago.');
     }
 
+    const order = await this.findOrderOrThrow(orderId);
     if (order.status !== OrderStatus.PAYMENT_PENDING) {
       throw new BadRequestException('Este pedido ya fue verificado.');
     }
@@ -229,7 +227,7 @@ export class OrdersService {
         where: { orderId },
         data: {
           verified: dto.verified,
-          verifiedByUserId: actingUser.userId,
+          verifiedByAdminId: actingUser.userId,
           verifiedAt: new Date(),
           verificationNotes: dto.verificationNotes,
         },
@@ -320,38 +318,24 @@ export class OrdersService {
     return orders.map(serializeOrderSafe);
   }
 
-  // Cola de dedicatorias pendientes para el Verificador (seccion 3.2 y HU-03).
-  async findMessageQueue() {
+  // Cola de dedicatorias pendientes para el Vendedor - puede buscar por el
+  // nombre del comprador para ubicar un pedido puntual (seccion 3.2 del SDD).
+  async findMessageQueue(search?: string) {
     const orders = await this.prisma.order.findMany({
       ...ORDER_WITH_RELATIONS,
-      where: { status: OrderStatus.MESSAGE_PENDING_REVIEW },
+      where: {
+        status: OrderStatus.MESSAGE_PENDING_REVIEW,
+        ...(search ? { deliveryDetail: { buyerFullName: { contains: search } } } : {}),
+      },
       orderBy: { createdAt: 'asc' },
     });
     return orders.map(serializeOrderMessageView);
   }
 
-  // Verificador: ve todos los pendientes de pago. Vendedor: solo los propios
-  // presenciales (seccion 3.4 y HU-06 del SDD).
-  async findPaymentView(actingUser: ActingUser, search?: string) {
-    const isSeller = actingUser.roleSlug === RoleSlug.SELLER;
-    const orders = await this.prisma.order.findMany({
-      ...ORDER_WITH_RELATIONS,
-      where: {
-        status: OrderStatus.PAYMENT_PENDING,
-        ...(isSeller
-          ? { salesChannel: SalesChannel.PRESENCIAL, assistedBySellerId: actingUser.userId }
-          : {}),
-        ...(search ? { deliveryDetail: { buyerName: { contains: search } } } : {}),
-      },
-      orderBy: { createdAt: 'asc' },
-    });
-    return orders.map(serializeOrderPaymentView);
-  }
-
   async findByRecipientName(recipientName: string) {
     const orders = await this.prisma.order.findMany({
       ...ORDER_WITH_RELATIONS,
-      where: { deliveryDetail: { recipientName: { contains: recipientName } } },
+      where: { deliveryDetail: { recipientFullName: { contains: recipientName } } },
       orderBy: { createdAt: 'desc' },
     });
     return orders.map(serializeOrderSafe);
