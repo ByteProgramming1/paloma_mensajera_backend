@@ -10,10 +10,12 @@ import { MicrosoftAuthService } from './microsoft/microsoft-auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { PermissionsGuard } from './guards/permissions.guard';
+import { MailerModule } from '../mailer/mailer.module';
 
 @Module({
   imports: [
     PassportModule,
+    MailerModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

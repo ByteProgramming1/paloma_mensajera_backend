@@ -29,4 +29,11 @@ export class CreateProductDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  // Normalmente se completa via POST /products/:id/image (ver seccion 9 del
+  // SDD); se deja como string simple (no @IsUrl) para admitir tanto rutas
+  // relativas de /uploads local como URLs completas de un bucket externo.
+  @IsOptional()
+  @IsString()
+  imageUrl?: string;
 }

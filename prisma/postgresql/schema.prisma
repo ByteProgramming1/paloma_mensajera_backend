@@ -1,0 +1,273 @@
+// Prisma schema - Paloma Mensajera (variante PostgreSQL, motor principal)
+// SQLite (../sqlite/schema.prisma) queda disponible como alternativa liviana
+// para desarrollo local sin instalar nada (ver DATABASE_PROVIDER y
+// src/prisma/prisma.service.ts). Ambas variantes deben mantenerse con el
+// mismo modelo de datos: los campos "enumerados" se dejan como String (en
+// vez de enums nativos de Postgres) para que el cliente generado tenga
+// exactamente la misma forma en los dos motores; se validan en la capa de
+// aplicacion (DTOs con class-validator) contra los enums de TypeScript en
+// src/common/enums.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "./generated"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Role {
+  id          String           @id @default(uuid())
+  name        String           @unique
+  slug        String           @unique
+  isSystem    Boolean          @default(false)
+  createdAt   DateTime         @default(now())
+  permissions RolePermission[]
+  users       User[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id       String           @id @default(uuid())
+  slug     String           @unique
+  resource String
+  action   String
+  roles    RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model User {
+  id          String    @id @default(uuid())
+  email       String    @unique
+  name        String
+  password    String?
+  microsoftId String?   @unique
+  isActive    Boolean   @default(true)
+  expiresAt   DateTime?
+  roleId      String
+  role        Role      @relation(fields: [roleId], references: [id])
+  createdAt   DateTime  @default(now())
+
+  // Auto-registro con verificacion de correo (sin depender de Microsoft Entra
+  // ID): null = pendiente de confirmar el codigo enviado a su bandeja. Las
+  // cuentas creadas por un admin (createTemporaryUser) o via Microsoft SSO
+  // quedan verificadas de inmediato, porque ya hay alguien/algo que dio fe de
+  // la identidad de esa persona.
+  emailVerifiedAt        DateTime?
+  emailVerificationCodes EmailVerificationCode[]
+
+  // Auditoria de rotacion de turnos (seccion 6 del SDD): quien y cuando se
+  // reasigno por ultima vez el rol de este usuario.
+  roleAssignedByAdminId String?
+  roleAssignedBy        User?     @relation("RoleAssignedBy", fields: [roleAssignedByAdminId], references: [id])
+  roleAssignedAt        DateTime?
+  roleReassignments     User[]    @relation("RoleAssignedBy")
+
+  verifiedPayments    PaymentTransaction[] @relation("VerifiedBy")
+  deliveryAssignments DeliveryAssignment[] @relation("DeliveryPerson")
+  drawRounds          DrawRound[]          @relation("DrawnBy")
+  reviewedMessages    MessageReview[]      @relation("ReviewedBy")
+
+  @@map("users")
+}
+
+// Codigo de un solo uso enviado por correo para el auto-registro (seccion
+// "acceso institucional"): prueba que la persona realmente tiene acceso al
+// buzon que dice tener, sin depender de Azure AD/TI para nada.
+model EmailVerificationCode {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  code      String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("email_verification_codes")
+}
+
+model Product {
+  id       String      @id @default(uuid())
+  name     String      @unique
+  type     String
+  price    Float
+  stock    Int
+  // URL en almacenamiento de objetos o en /uploads local (seccion 9 del SDD) -
+  // nunca un blob binario en esta tabla. Ver ImageStorageService.
+  imageUrl String?
+  isActive Boolean     @default(true)
+  items    OrderItem[]
+
+  @@map("products")
+}
+
+model RaffleNumber {
+  id            String      @id @default(uuid())
+  number        Int         @unique
+  status        String      @default("AVAILABLE")
+  orderId       String?     @unique
+  order         Order?      @relation(fields: [orderId], references: [id])
+  drawnAsWinner Boolean     @default(false)
+  drawBatchId   String?
+  drawnAt       DateTime?
+  createdAt     DateTime    @default(now())
+  drawRounds    DrawRound[]
+
+  @@map("raffle_numbers")
+}
+
+model Order {
+  id                 String   @id @default(uuid())
+  orderCode          String   @unique
+  // Ciclo de vida (seccion 7 del SDD): MESSAGE_PENDING_REVIEW -> MESSAGE_APPROVED
+  // -> PAYMENT_PENDING -> ... El pedido nace en revision de mensaje, no en pago.
+  status             String   @default("MESSAGE_PENDING_REVIEW")
+  // Se calcula recien en selectRaffleNumber (una vez MESSAGE_APPROVED), cuando
+  // se descuenta stock del carrito; por eso arranca en 0.
+  totalAmount        Float    @default(0)
+  salesChannel       String
+  assistedBySellerId String?
+  createdAt          DateTime @default(now())
+
+  items               OrderItem[]
+  deliveryDetail      DeliveryDetail?
+  messageReview       MessageReview?
+  paymentTransaction  PaymentTransaction?
+  raffleNumber        RaffleNumber?
+  deliveryAssignments DeliveryAssignment[]
+  drawRounds          DrawRound[]
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id        String  @id @default(uuid())
+  orderId   String
+  productId String
+  quantity  Int
+  // Se completa en selectRaffleNumber con el precio vigente del producto en
+  // ese momento; en la creacion del pedido (revision de mensaje) aun no se
+  // conoce, porque el carrito todavia no descuenta stock.
+  unitPrice Float   @default(0)
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id])
+
+  @@map("order_items")
+}
+
+// Revision de la dedicatoria (seccion 2, 6 y 8.1 del SDD vigente): 100% manual,
+// sin filtro automatico ni IA. La hace el Vendedor (o el Administrador, que
+// conserva el permiso como superset) y es el unico gate que habilita la rifa.
+// automaticFilterMethod/automaticFilterPassed quedan nullable: existieron en
+// un diseno anterior con filtro automatico y ya no se completan, pero no se
+// elimina la columna para no romper pedidos historicos que si los tenian.
+model MessageReview {
+  id                    String    @id @default(uuid())
+  orderId               String    @unique
+  order                 Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  automaticFilterMethod String?
+  automaticFilterPassed Boolean?
+  humanReviewStatus     String    @default("PENDING")
+  reviewedByUserId      String?
+  reviewedByUser        User?     @relation("ReviewedBy", fields: [reviewedByUserId], references: [id])
+  reviewedAt            DateTime?
+  rejectionReason       String?
+
+  @@map("message_reviews")
+}
+
+model DeliveryDetail {
+  id                      String  @id @default(uuid())
+  orderId                 String  @unique
+  order                   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  buyerFullName           String
+  buyerEmail              String
+  buyerPhone              String
+  // ESTUDIANTE | PROFESOR | ADMINISTRATIVO (seccion 3.1 del SDD vigente).
+  buyerType               String
+  buyerCareerOrArea       String
+  // Autorrecogida (seccion 3.1/3.2): si es true, recipientFullName/
+  // recipientTeamsUser se copian del propio comprador y deliveryNotes queda
+  // disponible para que el Vendedor identifique a la persona en la entrega.
+  selfPickup              Boolean @default(false)
+  recipientFullName       String
+  recipientCareerOrArea   String?
+  recipientTeamsUser      String
+  deliveryNotes           String?
+  letterContent           String
+  isAnonymous             Boolean @default(false)
+  // Historico de un diseno anterior con filtro automatico (ver MessageReview);
+  // ya no se completa, se deja nullable en vez de eliminar la columna.
+  contentModerationMethod String?
+  teamsNotificationSent   Boolean @default(false)
+  teamsGraphMessageId     String?
+
+  @@map("delivery_details")
+}
+
+// Verificacion de pago (seccion 3.3 y 11.2 del SDD vigente): tarea exclusiva
+// del Administrador, sin ningun otro rol posible - por eso el campo se nombra
+// explicitamente "verifiedByAdminId" en vez de un generico "...UserId".
+model PaymentTransaction {
+  id                String    @id @default(uuid())
+  orderId           String    @unique
+  order             Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  paymentMethod     String    @default("NEQUI")
+  verified          Boolean   @default(false)
+  verifiedByAdminId String?
+  verifiedByAdmin   User?     @relation("VerifiedBy", fields: [verifiedByAdminId], references: [id])
+  verifiedAt        DateTime?
+  verificationNotes String?
+
+  @@map("payment_transactions")
+}
+
+model DeliveryAssignment {
+  id                   String    @id @default(uuid())
+  orderId              String
+  order                Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  deliveryPersonId     String
+  deliveryPerson       User      @relation("DeliveryPerson", fields: [deliveryPersonId], references: [id])
+  status               String    @default("IN_ROUTE")
+  assignedAt           DateTime  @default(now())
+  deliveredAt          DateTime?
+  receivedBy           String?
+  teamsConfirmationLog String?
+  notes                String?
+
+  @@map("delivery_assignments")
+}
+
+model DrawRound {
+  id             String       @id @default(uuid())
+  drawBatchId    String
+  raffleNumberId String
+  raffleNumber   RaffleNumber @relation(fields: [raffleNumberId], references: [id])
+  orderId        String
+  order          Order        @relation(fields: [orderId], references: [id])
+  drawnAt        DateTime     @default(now())
+  drawnByAdminId String
+  drawnByAdmin   User         @relation("DrawnBy", fields: [drawnByAdminId], references: [id])
+
+  @@map("draw_rounds")
+}
+
+model AppSettings {
+  id               String @id @default("singleton")
+  notificationMode String @default("MANUAL")
+
+  @@map("app_settings")
+}

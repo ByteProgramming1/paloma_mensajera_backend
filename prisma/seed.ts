@@ -1,8 +1,22 @@
-import { PrismaClient } from '@prisma/client';
+import 'dotenv/config';
 import * as argon2 from 'argon2';
+import { PrismaClient as PostgresqlPrismaClient } from './postgresql/generated';
+import { PrismaClient as SqlitePrismaClient } from './sqlite/generated';
 import { PERMISSION_DEFINITIONS, ROLE_PERMISSION_MATRIX } from '../src/common/enums/permissions';
 
-const prisma = new PrismaClient();
+// Mismo criterio de seleccion que src/prisma/prisma.service.ts: PostgreSQL es
+// el motor principal, SQLite la alternativa liviana para desarrollo local.
+// El cliente de SQLite se castea al tipo del de Postgres: ambos se generan
+// del mismo modelo de datos (ver los dos schema.prisma), asi que su forma en
+// runtime coincide aunque TypeScript no pueda unificar los tipos genericos
+// de ambos clientes automaticamente.
+const provider = process.env.DATABASE_PROVIDER ?? 'postgresql';
+const prisma: PostgresqlPrismaClient =
+  provider === 'sqlite'
+    ? (new SqlitePrismaClient({
+        datasourceUrl: process.env.SQLITE_DATABASE_URL,
+      }) as unknown as PostgresqlPrismaClient)
+    : new PostgresqlPrismaClient({ datasourceUrl: process.env.DATABASE_URL });
 
 const ARGON2ID_OPTIONS = {
   type: argon2.argon2id,

@@ -14,8 +14,8 @@ export class TeamsNotificationService {
     private readonly graphClient: GraphClientService,
   ) {}
 
-  private buildDeliveryMessage(recipientName: string, itemNames: string[]): string {
-    return `Hola ${recipientName}, tu pedido de Paloma Mensajera (${itemNames.join(', ')}) ya esta listo para recoger. Coordina con el encargado el dia y lugar de entrega.`;
+  private buildDeliveryMessage(recipientFullName: string, itemNames: string[]): string {
+    return `Hola ${recipientFullName}, tu pedido de Paloma Mensajera (${itemNames.join(', ')}) ya esta listo para recoger. Coordina con el encargado el dia y lugar de entrega.`;
   }
 
   async notify(orderId: string) {
@@ -24,9 +24,18 @@ export class TeamsNotificationService {
       include: { deliveryDetail: true, items: { include: { product: true } } },
     });
 
+    // Autorrecogida: el destinatario es el propio comprador, no hay a quien
+    // avisar aparte (seccion 2 del SDD vigente) - se marca enviado sin notificar.
+    if (order.deliveryDetail!.selfPickup) {
+      return this.prisma.deliveryDetail.update({
+        where: { orderId },
+        data: { teamsNotificationSent: true },
+      });
+    }
+
     const mode = await this.settingsService.getNotificationMode();
     const message = this.buildDeliveryMessage(
-      order.deliveryDetail!.recipientName,
+      order.deliveryDetail!.recipientFullName,
       order.items.map((item) => item.product.name),
     );
 

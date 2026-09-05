@@ -19,6 +19,14 @@ export class AuthController {
     return this.authService.login(dto);
   }
 
+  // POST /auth/register y /auth/verify-email (auto-registro con codigo por
+  // correo) quedan deshabilitados: el acceso institucional se resuelve con
+  // Microsoft SSO (ver loginWithMicrosoft), que da mejor experiencia y ya fue
+  // validado como viable sin depender de TI (app registration con una cuenta
+  // personal + validacion de dominio en AuthService.assertInstitutionalEmail).
+  // AuthService.register/verifyEmail y su schema (emailVerifiedAt,
+  // EmailVerificationCode) se dejan intactos por si se retoma mas adelante.
+
   // Login con la cuenta institucional de Microsoft (Entra ID) - ver AuthService.loginWithMicrosoft.
   @Public()
   @Throttle({ default: { limit: 5, ttl: 60000 } })

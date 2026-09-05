@@ -5,5 +5,11 @@ coverage
 .env
 *.log
 prisma/data
-prisma/*.db
-prisma/*.db-journal
+prisma/**/dev.db
+prisma/**/dev.db-journal
+
+# clientes generados en el host (Windows/macOS): se regeneran dentro de la
+# imagen para que el motor de consultas de Prisma coincida con el contenedor
+prisma/**/generated
+
+uploads/

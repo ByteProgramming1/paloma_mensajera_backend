@@ -1,15 +1,41 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-paloma}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-paloma}
+      POSTGRES_DB: ${POSTGRES_DB:-paloma_mensajera}
+    volumes:
+      - paloma_mensajera_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-paloma} -d ${POSTGRES_DB:-paloma_mensajera}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   api:
     build:
       context: .
       dockerfile: Dockerfile
     env_file:
       - .env
+    environment:
+      # PostgreSQL es el motor principal. Se sobreescribe DATABASE_URL para
+      # apuntar al servicio "postgres" de esta red de Docker (no localhost).
+      DATABASE_PROVIDER: postgresql
+      DATABASE_URL: postgresql://${POSTGRES_USER:-paloma}:${POSTGRES_PASSWORD:-paloma}@postgres:5432/${POSTGRES_DB:-paloma_mensajera}?schema=public
     ports:
       - "${HOST_PORT:-3000}:3000"
     volumes:
-      - paloma_mensajera_data:/app/prisma/data
+      # Persiste las imagenes subidas en modo IMAGE_STORAGE_PROVIDER=LOCAL_FILESYSTEM
+      # (seccion 9 del SDD) - de lo contrario se perderian en cada reinicio del contenedor.
+      - paloma_mensajera_uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
-  paloma_mensajera_data:
+  paloma_mensajera_postgres_data:
+  paloma_mensajera_uploads:
