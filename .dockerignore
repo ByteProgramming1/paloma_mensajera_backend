@@ -11,3 +11,5 @@ prisma/**/dev.db-journal
 # clientes generados en el host (Windows/macOS): se regeneran dentro de la
 # imagen para que el motor de consultas de Prisma coincida con el contenedor
 prisma/**/generated
+
+uploads/

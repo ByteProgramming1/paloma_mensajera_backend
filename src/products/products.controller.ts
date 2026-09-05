@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { RequirePermissions } from '../common/decorators/permissions.decorator';
 import { Permissions } from '../common/enums/permissions';
 import { ProductsService } from './products.service';
@@ -25,5 +35,15 @@ export class ProductsController {
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateProductDto) {
     return this.productsService.update(id, dto);
+  }
+
+  // Sube la imagen al almacenamiento configurado y actualiza imageUrl
+  // (seccion 9 del SDD) - memoryStorage: el archivo nunca toca disco antes de
+  // pasar por la validacion de tipo/tamano en ImageStorageService.
+  @RequirePermissions(Permissions.PRODUCTS_MANAGE)
+  @Post(':id/image')
+  @UseInterceptors(FileInterceptor('file'))
+  uploadImage(@Param('id') id: string, @UploadedFile() file?: Express.Multer.File) {
+    return this.productsService.updateImage(id, file);
   }
 }

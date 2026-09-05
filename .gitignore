@@ -20,6 +20,9 @@ prisma/data/
 # generated Prisma clients (postgresql + sqlite variants)
 prisma/**/generated/
 
+# imagenes subidas en modo IMAGE_STORAGE_PROVIDER=LOCAL_FILESYSTEM (seccion 9 del SDD)
+uploads/
+
 # logs
 logs/
 *.log

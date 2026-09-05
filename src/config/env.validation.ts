@@ -39,4 +39,15 @@ export const envValidationSchema = Joi.object({
   ADMIN_SEED_EMAIL: Joi.string().email().optional(),
   ADMIN_SEED_PASSWORD: Joi.string().min(8).optional(),
   RAFFLE_NUMBER_COUNT: Joi.number().integer().min(1).default(100),
+
+  // Almacenamiento de imagenes del catalogo (seccion 9 del SDD). LOCAL_FILESYSTEM
+  // funciona sin configurar nada mas (sirve /uploads desde el propio backend);
+  // S3_COMPATIBLE queda declarado para cuando el equipo tenga un bucket real.
+  IMAGE_STORAGE_PROVIDER: Joi.string()
+    .valid('LOCAL_FILESYSTEM', 'S3_COMPATIBLE')
+    .default('LOCAL_FILESYSTEM'),
+  IMAGE_BUCKET_NAME: Joi.string().allow('').optional(),
+  IMAGE_BUCKET_ACCESS_KEY: Joi.string().allow('').optional(),
+  IMAGE_BUCKET_SECRET_KEY: Joi.string().allow('').optional(),
+  IMAGE_MAX_SIZE_MB: Joi.number().integer().min(1).default(5),
 });

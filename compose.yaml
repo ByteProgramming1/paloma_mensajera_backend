@@ -27,6 +27,10 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-paloma}:${POSTGRES_PASSWORD:-paloma}@postgres:5432/${POSTGRES_DB:-paloma_mensajera}?schema=public
     ports:
       - "${HOST_PORT:-3000}:3000"
+    volumes:
+      # Persiste las imagenes subidas en modo IMAGE_STORAGE_PROVIDER=LOCAL_FILESYSTEM
+      # (seccion 9 del SDD) - de lo contrario se perderian en cada reinicio del contenedor.
+      - paloma_mensajera_uploads:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -34,3 +38,4 @@ services:
 
 volumes:
   paloma_mensajera_postgres_data:
+  paloma_mensajera_uploads:
