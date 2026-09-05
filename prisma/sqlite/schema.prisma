@@ -82,6 +82,9 @@ model Product {
   type     String
   price    Float
   stock    Int
+  // URL en almacenamiento de objetos o en /uploads local (seccion 9 del SDD) -
+  // nunca un blob binario en esta tabla. Ver ImageStorageService.
+  imageUrl String?
   isActive Boolean     @default(true)
   items    OrderItem[]
 
@@ -142,16 +145,18 @@ model OrderItem {
   @@map("order_items")
 }
 
-// Doble verificacion de la dedicatoria (seccion 2 y 7.1 del SDD): materializa
-// el filtro automatico (siempre aprobado si el pedido llego a existir) y,
-// sobre todo, la revision humana final que hace el Verificador y que es la
-// que realmente habilita el mapa de rifa.
+// Revision de la dedicatoria (seccion 2, 6 y 8.1 del SDD vigente): 100% manual,
+// sin filtro automatico ni IA. La hace el Vendedor (o el Administrador, que
+// conserva el permiso como superset) y es el unico gate que habilita la rifa.
+// automaticFilterMethod/automaticFilterPassed quedan nullable: existieron en
+// un diseno anterior con filtro automatico y ya no se completan, pero no se
+// elimina la columna para no romper pedidos historicos que si los tenian.
 model MessageReview {
   id                    String    @id @default(uuid())
   orderId               String    @unique
   order                 Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  automaticFilterMethod String
-  automaticFilterPassed Boolean   @default(true)
+  automaticFilterMethod String?
+  automaticFilterPassed Boolean?
   humanReviewStatus     String    @default("PENDING")
   reviewedByUserId      String?
   reviewedByUser        User?     @relation("ReviewedBy", fields: [reviewedByUserId], references: [id])
@@ -165,28 +170,42 @@ model DeliveryDetail {
   id                      String  @id @default(uuid())
   orderId                 String  @unique
   order                   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  buyerName               String
+  buyerFullName           String
   buyerEmail              String
   buyerPhone              String
-  recipientName           String
+  // ESTUDIANTE | PROFESOR | ADMINISTRATIVO (seccion 3.1 del SDD vigente).
+  buyerType               String
+  buyerCareerOrArea       String
+  // Autorrecogida (seccion 3.1/3.2): si es true, recipientFullName/
+  // recipientTeamsUser se copian del propio comprador y deliveryNotes queda
+  // disponible para que el Vendedor identifique a la persona en la entrega.
+  selfPickup              Boolean @default(false)
+  recipientFullName       String
+  recipientCareerOrArea   String?
   recipientTeamsUser      String
+  deliveryNotes           String?
   letterContent           String
   isAnonymous             Boolean @default(false)
-  contentModerationMethod String
+  // Historico de un diseno anterior con filtro automatico (ver MessageReview);
+  // ya no se completa, se deja nullable en vez de eliminar la columna.
+  contentModerationMethod String?
   teamsNotificationSent   Boolean @default(false)
   teamsGraphMessageId     String?
 
   @@map("delivery_details")
 }
 
+// Verificacion de pago (seccion 3.3 y 11.2 del SDD vigente): tarea exclusiva
+// del Administrador, sin ningun otro rol posible - por eso el campo se nombra
+// explicitamente "verifiedByAdminId" en vez de un generico "...UserId".
 model PaymentTransaction {
   id                String    @id @default(uuid())
   orderId           String    @unique
   order             Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
   paymentMethod     String    @default("NEQUI")
   verified          Boolean   @default(false)
-  verifiedByUserId  String?
-  verifiedByUser    User?     @relation("VerifiedBy", fields: [verifiedByUserId], references: [id])
+  verifiedByAdminId String?
+  verifiedByAdmin   User?     @relation("VerifiedBy", fields: [verifiedByAdminId], references: [id])
   verifiedAt        DateTime?
   verificationNotes String?
 

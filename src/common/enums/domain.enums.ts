@@ -25,6 +25,12 @@ export enum SalesChannel {
   PRESENCIAL = 'PRESENCIAL',
 }
 
+export enum BuyerType {
+  ESTUDIANTE = 'ESTUDIANTE',
+  PROFESOR = 'PROFESOR',
+  ADMINISTRATIVO = 'ADMINISTRATIVO',
+}
+
 export enum RaffleNumberStatus {
   AVAILABLE = 'AVAILABLE',
   ASSIGNED = 'ASSIGNED',
