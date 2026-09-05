@@ -55,4 +55,39 @@ export class MailerService {
       throw new ServiceUnavailableException('No fue posible enviar el correo de verificacion.');
     }
   }
+
+  // Notificacion al comprador cuando su pedido ya fue entregado (a diferencia
+  // de sendVerificationCode, aqui un fallo de envio NO debe bloquear la
+  // confirmacion de entrega en OrdersService: se registra el error y se sigue.
+  async sendDeliveryConfirmation(email: string, buyerName: string): Promise<void> {
+    if (!this.isConfigured()) {
+      this.logger.warn(`SMTP no configurado: no se envio la confirmacion de entrega a ${email}.`);
+      return;
+    }
+
+    const safeName = this.escapeHtml(buyerName);
+
+    try {
+      await this.getTransporter().sendMail({
+        from: this.configService.get<string>('SMTP_USER'),
+        to: email,
+        subject: 'Tu compra ha sido entregada - Paloma Mensajera',
+        text: `Hola ${buyerName},\n\nTu compra ya ha sido entregada correctamente a la persona que designaste.\n\nGracias por usar Paloma Mensajera.`,
+        html: `<p>Hola ${safeName},</p><p>Tu compra ya ha sido <strong>entregada correctamente</strong> a la persona que designaste.</p><p>Gracias por usar Paloma Mensajera.</p>`,
+      });
+    } catch (error) {
+      this.logger.error(
+        `No se pudo enviar la confirmacion de entrega a ${email}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
+  }
+
+  private escapeHtml(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
 }
