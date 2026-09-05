@@ -1,6 +1,17 @@
 # Paloma Mensajera - Backend
 
-API del Sistema Integral de Gestion, Ventas y Envios de Paloma Mensajera, construida con NestJS y Prisma. **PostgreSQL** es el motor de base de datos principal; SQLite queda disponible como alternativa liviana para desarrollo local sin instalar nada. El diseno completo del sistema esta documentado en [SDD_Paloma_Mensajera_2.md](SDD_Paloma_Mensajera_2.md).
+API del Sistema Integral de Gestion, Ventas y Envios de Paloma Mensajera, construida con NestJS y Prisma. **PostgreSQL** es el motor de base de datos principal; SQLite queda disponible como alternativa liviana para desarrollo local sin instalar nada. El diseno vigente del sistema esta documentado en [SDD_Paloma_Mensajera.md](SDD_Paloma_Mensajera.md) (version anterior conservada en [SDD_Paloma_Mensajera_2.md](SDD_Paloma_Mensajera_2.md)).
+
+## Flujo de un pedido
+
+1. **`POST /orders/public`** - el comprador arma el carrito y escribe su dedicatoria. Pasa el filtro automatico y el pedido nace en `MESSAGE_PENDING_REVIEW` (aun sin tocar stock ni rifa).
+2. **`PATCH /orders/:id/verify-message`** (rol `verifier`) - revision humana final de la dedicatoria. Solo `MESSAGE_APPROVED` habilita el paso siguiente.
+3. **`POST /orders/:id/select-raffle-number`** - descuenta stock del carrito, asigna el numero de rifa de forma atomica y crea el pago pendiente (`PAYMENT_PENDING`).
+4. **`PATCH /orders/:id/verify-payment`** (rol `verifier`, o `seller` solo para sus propias ventas `PRESENCIAL`) - confirma o rechaza el pago contra Nequi.
+5. **`PATCH /orders/:id/assign-delivery`** + **`PATCH /orders/:id/delivery-status`** (rol `seller`, que fusiona venta y entrega) - notifica por Teams y confirma la entrega.
+6. **`POST /raffle-numbers/draw`** (admin, al cierre del evento) - sorteo con ruleta sobre los numeros con pago verificado.
+
+El rol `verifier` ya no revisa pagos exclusivamente: ahora tambien aprueba o rechaza cada dedicatoria (`messages:read_queue`, `messages:verify`) antes de que exista rifa. El rol `delivery` se mantiene en el sistema por compatibilidad, pero las cuentas nuevas usan `seller` (fusiona venta + entrega). Un administrador puede reasignar el rol de cualquier usuario o desactivar su acceso sin crear una cuenta nueva: `PATCH /users/:id/role` y `PATCH /users/:id/status` (rotacion de turnos, seccion 6 del SDD) — el cambio aplica de inmediato porque el rol y los permisos se re-consultan en cada request, no se confia en el JWT ya emitido.
 
 ## Requisitos
 
