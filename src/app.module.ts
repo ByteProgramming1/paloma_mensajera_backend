@@ -12,6 +12,7 @@ import { RaffleNumbersModule } from './raffle-numbers/raffle-numbers.module';
 import { SettingsModule } from './settings/settings.module';
 import { OrdersModule } from './orders/orders.module';
 import { MetricsModule } from './metrics/metrics.module';
+import { UsersModule } from './users/users.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { MetricsModule } from './metrics/metrics.module';
     SettingsModule,
     OrdersModule,
     MetricsModule,
+    UsersModule,
   ],
   controllers: [AppController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
