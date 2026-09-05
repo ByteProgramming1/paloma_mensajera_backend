@@ -61,9 +61,17 @@ model User {
   role        Role      @relation(fields: [roleId], references: [id])
   createdAt   DateTime  @default(now())
 
+  // Auditoria de rotacion de turnos (seccion 6 del SDD): quien y cuando se
+  // reasigno por ultima vez el rol de este usuario.
+  roleAssignedByAdminId String?
+  roleAssignedBy        User?     @relation("RoleAssignedBy", fields: [roleAssignedByAdminId], references: [id])
+  roleAssignedAt        DateTime?
+  roleReassignments     User[]    @relation("RoleAssignedBy")
+
   verifiedPayments    PaymentTransaction[] @relation("VerifiedBy")
   deliveryAssignments DeliveryAssignment[] @relation("DeliveryPerson")
   drawRounds          DrawRound[]          @relation("DrawnBy")
+  reviewedMessages    MessageReview[]      @relation("ReviewedBy")
 
   @@map("users")
 }
@@ -98,14 +106,19 @@ model RaffleNumber {
 model Order {
   id                 String   @id @default(uuid())
   orderCode          String   @unique
-  status              String  @default("PAYMENT_PENDING")
-  totalAmount        Float
+  // Ciclo de vida (seccion 7 del SDD): MESSAGE_PENDING_REVIEW -> MESSAGE_APPROVED
+  // -> PAYMENT_PENDING -> ... El pedido nace en revision de mensaje, no en pago.
+  status             String   @default("MESSAGE_PENDING_REVIEW")
+  // Se calcula recien en selectRaffleNumber (una vez MESSAGE_APPROVED), cuando
+  // se descuenta stock del carrito; por eso arranca en 0.
+  totalAmount        Float    @default(0)
   salesChannel       String
   assistedBySellerId String?
   createdAt          DateTime @default(now())
 
   items               OrderItem[]
   deliveryDetail      DeliveryDetail?
+  messageReview       MessageReview?
   paymentTransaction  PaymentTransaction?
   raffleNumber        RaffleNumber?
   deliveryAssignments DeliveryAssignment[]
@@ -119,11 +132,33 @@ model OrderItem {
   orderId   String
   productId String
   quantity  Int
-  unitPrice Float
+  // Se completa en selectRaffleNumber con el precio vigente del producto en
+  // ese momento; en la creacion del pedido (revision de mensaje) aun no se
+  // conoce, porque el carrito todavia no descuenta stock.
+  unitPrice Float   @default(0)
   order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product   Product @relation(fields: [productId], references: [id])
 
   @@map("order_items")
+}
+
+// Doble verificacion de la dedicatoria (seccion 2 y 7.1 del SDD): materializa
+// el filtro automatico (siempre aprobado si el pedido llego a existir) y,
+// sobre todo, la revision humana final que hace el Verificador y que es la
+// que realmente habilita el mapa de rifa.
+model MessageReview {
+  id                    String    @id @default(uuid())
+  orderId               String    @unique
+  order                 Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  automaticFilterMethod String
+  automaticFilterPassed Boolean   @default(true)
+  humanReviewStatus     String    @default("PENDING")
+  reviewedByUserId      String?
+  reviewedByUser        User?     @relation("ReviewedBy", fields: [reviewedByUserId], references: [id])
+  reviewedAt            DateTime?
+  rejectionReason       String?
+
+  @@map("message_reviews")
 }
 
 model DeliveryDetail {
