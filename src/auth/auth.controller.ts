@@ -7,8 +7,6 @@ import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { MicrosoftLoginDto } from './dto/microsoft-login.dto';
 import { CreateTemporaryUserDto } from './dto/create-temporary-user.dto';
-import { RegisterDto } from './dto/register.dto';
-import { VerifyEmailDto } from './dto/verify-email.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -21,20 +19,13 @@ export class AuthController {
     return this.authService.login(dto);
   }
 
-  // Auto-registro con correo institucional - ver AuthService.register.
-  @Public()
-  @Throttle({ default: { limit: 5, ttl: 60000 } })
-  @Post('register')
-  register(@Body() dto: RegisterDto) {
-    return this.authService.register(dto);
-  }
-
-  @Public()
-  @Throttle({ default: { limit: 5, ttl: 60000 } })
-  @Post('verify-email')
-  verifyEmail(@Body() dto: VerifyEmailDto) {
-    return this.authService.verifyEmail(dto);
-  }
+  // POST /auth/register y /auth/verify-email (auto-registro con codigo por
+  // correo) quedan deshabilitados: el acceso institucional se resuelve con
+  // Microsoft SSO (ver loginWithMicrosoft), que da mejor experiencia y ya fue
+  // validado como viable sin depender de TI (app registration con una cuenta
+  // personal + validacion de dominio en AuthService.assertInstitutionalEmail).
+  // AuthService.register/verifyEmail y su schema (emailVerifiedAt,
+  // EmailVerificationCode) se dejan intactos por si se retoma mas adelante.
 
   // Login con la cuenta institucional de Microsoft (Entra ID) - ver AuthService.loginWithMicrosoft.
   @Public()
