@@ -13,9 +13,11 @@ COPY nest-cli.json tsconfig*.json ./
 COPY prisma ./prisma
 COPY src ./src
 
-RUN npx prisma generate && npm run build
+RUN npm run prisma:generate && npm run build
 
 ENV NODE_ENV=production
 EXPOSE 3000
 
-CMD ["sh", "-c", "npx prisma migrate deploy && npm run prisma:seed && node dist/src/main.js"]
+# PostgreSQL es el motor principal (ver DATABASE_PROVIDER); "prisma:deploy" y
+# "prisma:seed" operan sobre prisma/postgresql por defecto.
+CMD ["sh", "-c", "npm run prisma:deploy && npm run prisma:seed && node dist/main.js"]

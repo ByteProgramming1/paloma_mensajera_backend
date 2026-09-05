@@ -1,4 +1,4 @@
-import { IsDateString, IsEmail, IsString, MinLength } from 'class-validator';
+import { IsDateString, IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class CreateTemporaryUserDto {
   @IsEmail()
@@ -8,9 +8,12 @@ export class CreateTemporaryUserDto {
   @MinLength(2)
   name: string;
 
+  // Opcional: si se omite, la cuenta solo puede iniciar sesion con Microsoft
+  // Entra ID (SSO institucional) - ver AuthService.loginWithMicrosoft.
+  @IsOptional()
   @IsString()
   @MinLength(8)
-  password: string;
+  password?: string;
 
   @IsString()
   roleSlug: string;

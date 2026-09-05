@@ -1,8 +1,12 @@
-import { Prisma } from '@prisma/client';
+// Se tipa contra el cliente generado de Postgres (motor principal), no contra
+// el paquete generico `@prisma/client` (sus tipos por defecto quedan
+// desactualizados porque ya no generamos ahi - ver src/prisma/prisma.service.ts).
+import { Prisma } from '../../prisma/postgresql/generated';
 
 export const ORDER_WITH_RELATIONS = Prisma.validator<Prisma.OrderDefaultArgs>()({
   include: {
     deliveryDetail: true,
+    messageReview: true,
     paymentTransaction: true,
     raffleNumber: { select: { id: true, number: true, status: true } },
     items: { include: { product: true } },
@@ -30,47 +34,67 @@ function baseOrderFields(order: OrderWithRelations) {
   };
 }
 
-// Vista completa, exclusiva del rol admin (seccion 5: visibilidad total sin filtros).
+// Vista completa, exclusiva del rol admin (seccion 6 del SDD vigente): ve todo
+// sin ninguna restriccion de campos - por eso ya no existe un "OrderPaymentView"
+// separado, el admin usa esta misma vista tambien para verificar pagos.
 export function serializeOrderFull(order: OrderWithRelations) {
   return {
     ...baseOrderFields(order),
-    buyerName: order.deliveryDetail?.buyerName,
+    buyerFullName: order.deliveryDetail?.buyerFullName,
     buyerEmail: order.deliveryDetail?.buyerEmail,
     buyerPhone: order.deliveryDetail?.buyerPhone,
-    recipientName: order.deliveryDetail?.recipientName,
+    buyerType: order.deliveryDetail?.buyerType,
+    buyerCareerOrArea: order.deliveryDetail?.buyerCareerOrArea,
+    selfPickup: order.deliveryDetail?.selfPickup,
+    recipientFullName: order.deliveryDetail?.recipientFullName,
+    recipientCareerOrArea: order.deliveryDetail?.recipientCareerOrArea,
     recipientTeamsUser: order.deliveryDetail?.recipientTeamsUser,
+    deliveryNotes: order.deliveryDetail?.deliveryNotes,
     letterContent: order.deliveryDetail?.letterContent,
     isAnonymous: order.deliveryDetail?.isAnonymous,
     teamsNotificationSent: order.deliveryDetail?.teamsNotificationSent,
     payment: order.paymentTransaction,
+    messageReview: order.messageReview
+      ? {
+          humanReviewStatus: order.messageReview.humanReviewStatus,
+          rejectionReason: order.messageReview.rejectionReason,
+          reviewedByUserId: order.messageReview.reviewedByUserId,
+          reviewedAt: order.messageReview.reviewedAt,
+        }
+      : null,
   };
 }
 
-// Vista para seller/delivery (orders:read_public_safe): buyerName se omite (no se
-// envia, ni ofuscado ni vacio) cuando el pedido es anonimo - ver HU-05.
+// Vista para el Vendedor (orders:read_public_safe): buyerFullName se omite
+// (no se envia, ni ofuscado ni vacio) cuando el pedido es anonimo - ver HU-06.
 export function serializeOrderSafe(order: OrderWithRelations) {
   const isAnonymous = order.deliveryDetail?.isAnonymous ?? false;
   return {
     ...baseOrderFields(order),
-    ...(isAnonymous ? {} : { buyerName: order.deliveryDetail?.buyerName }),
-    recipientName: order.deliveryDetail?.recipientName,
+    ...(isAnonymous ? {} : { buyerFullName: order.deliveryDetail?.buyerFullName }),
+    selfPickup: order.deliveryDetail?.selfPickup,
+    recipientFullName: order.deliveryDetail?.recipientFullName,
     recipientTeamsUser: order.deliveryDetail?.recipientTeamsUser,
+    deliveryNotes: order.deliveryDetail?.deliveryNotes,
     letterContent: order.deliveryDetail?.letterContent,
     isAnonymous,
     teamsNotificationSent: order.deliveryDetail?.teamsNotificationSent,
   };
 }
 
-// OrderPaymentView del Verificador (seccion 3.5): unicamente lo necesario para
-// cruzar contra la app de Nequi. Deliberadamente excluye destinatario y dedicatoria.
-export function serializeOrderPaymentView(order: OrderWithRelations) {
+// OrderMessagePendingView de la cola del Vendedor (seccion 3.2 del SDD
+// vigente): a diferencia del diseno anterior con Verificador, el Vendedor SI
+// necesita identidad (para poder buscar al comprador por nombre) y contexto
+// de autorrecogida/comentario, no solo el texto de la dedicatoria.
+export function serializeOrderMessageView(order: OrderWithRelations) {
   return {
     orderId: order.id,
     orderCode: order.orderCode,
-    buyerName: order.deliveryDetail?.buyerName,
-    buyerPhone: order.deliveryDetail?.buyerPhone,
-    totalAmount: order.totalAmount,
-    paymentMethod: order.paymentTransaction?.paymentMethod,
-    status: order.status,
+    buyerFullName: order.deliveryDetail?.buyerFullName,
+    recipientFullName: order.deliveryDetail?.recipientFullName,
+    letterContent: order.deliveryDetail?.letterContent,
+    isAnonymous: order.deliveryDetail?.isAnonymous,
+    selfPickup: order.deliveryDetail?.selfPickup,
+    deliveryNotes: order.deliveryDetail?.deliveryNotes,
   };
 }

@@ -11,9 +11,10 @@ import {
   IsUUID,
   Min,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
-import { SalesChannel } from '../../common/enums/domain.enums';
+import { BuyerType, SalesChannel } from '../../common/enums/domain.enums';
 
 export class CartItemDto {
   @IsUUID()
@@ -27,7 +28,7 @@ export class CartItemDto {
 export class CreateOrderDto {
   @IsString()
   @MinLength(2)
-  buyerName: string;
+  buyerFullName: string;
 
   @IsEmail()
   buyerEmail: string;
@@ -36,17 +37,42 @@ export class CreateOrderDto {
   @MinLength(5)
   buyerPhone: string;
 
+  @IsIn(Object.values(BuyerType))
+  buyerType: BuyerType;
+
+  @IsString()
+  @MinLength(1)
+  buyerCareerOrArea: string;
+
   @IsOptional()
   @IsUUID()
   assistedBySellerId?: string;
 
+  // Autorrecogida (seccion 3.1 del SDD): si es true, no se piden datos de un
+  // destinatario distinto - el backend copia los del propio comprador (ver
+  // OrdersService.createPublicOrder).
+  @IsBoolean()
+  selfPickup: boolean;
+
+  @ValidateIf((dto: CreateOrderDto) => !dto.selfPickup)
   @IsString()
   @MinLength(2)
-  recipientName: string;
+  recipientFullName?: string;
 
+  @ValidateIf((dto: CreateOrderDto) => !dto.selfPickup)
   @IsString()
   @MinLength(1)
-  recipientTeamsUser: string;
+  recipientCareerOrArea?: string;
+
+  @ValidateIf((dto: CreateOrderDto) => !dto.selfPickup)
+  @IsString()
+  @MinLength(1)
+  recipientTeamsUser?: string;
+
+  // Solo relevante si selfPickup = true: comentario libre para el Vendedor.
+  @IsOptional()
+  @IsString()
+  deliveryNotes?: string;
 
   @IsArray()
   @ArrayNotEmpty()
@@ -63,7 +89,4 @@ export class CreateOrderDto {
 
   @IsIn(Object.values(SalesChannel))
   salesChannel: SalesChannel;
-
-  @IsUUID()
-  raffleNumberId: string;
 }
