@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+# DATABASE_URL/SQLITE_DATABASE_URL no necesitan ser alcanzables para "prisma
+# generate" (solo se usan en runtime real), asi que valores de relleno bastan
+# para que el pipeline no dependa de una base de datos real.
+env:
+  DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci"
+  SQLITE_DATABASE_URL: "file:./ci.db"
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma clients (postgres + sqlite)
+        run: npm run prisma:generate
+
+      - name: Lint
+        run: npm run lint:check
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test -- --ci
+
+      - name: Build
+        run: npm run build
+
+  docker-build:
+    needs: ci
+    runs-on: ubuntu-latest
+    # Valida que la imagen de despliegue siga construyendo correctamente. No
+    # hay un entorno de hosting real configurado todavia, asi que este es el
+    # paso de "CD" disponible por ahora: sin esto, no hay a donde desplegar.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t paloma-mensajera-backend:ci .
