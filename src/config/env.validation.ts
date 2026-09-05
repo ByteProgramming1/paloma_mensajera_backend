@@ -14,6 +14,9 @@ export const envValidationSchema = Joi.object({
   }),
   SQLITE_DATABASE_URL: Joi.string().default('file:./dev.db'),
   JWT_SECRET: Joi.string().min(16).required(),
+  FIELD_ENCRYPTION_KEY: Joi.string()
+    .pattern(/^[0-9a-fA-F]{64}$/)
+    .required(),
   JWT_EXPIRES_IN: Joi.string().default('1d'),
   THROTTLE_TTL: Joi.number().default(60000),
   THROTTLE_LIMIT: Joi.number().default(20),

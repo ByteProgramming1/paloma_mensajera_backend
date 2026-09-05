@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaClient as PostgresqlPrismaClient } from '../../prisma/postgresql/generated';
 import { PrismaClient as SqlitePrismaClient } from '../../prisma/sqlite/generated';
 import { DatabaseProvider } from '../common/enums/domain.enums';
+import { DatabaseEncryptionService } from './database-encryption.service';
 
 type AnyPrismaClient = PostgresqlPrismaClient | SqlitePrismaClient;
 
@@ -33,16 +34,18 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   readonly provider: DatabaseProvider;
 
   constructor(configService: ConfigService) {
+    const encryption = new DatabaseEncryptionService(configService);
     this.provider =
       (configService.get<string>('DATABASE_PROVIDER') as DatabaseProvider) ??
       DatabaseProvider.POSTGRESQL;
 
-    this.client =
+    const baseClient =
       this.provider === DatabaseProvider.SQLITE
         ? new SqlitePrismaClient({
             datasourceUrl: configService.get<string>('SQLITE_DATABASE_URL'),
           })
         : new PostgresqlPrismaClient({ datasourceUrl: configService.get<string>('DATABASE_URL') });
+    this.client = encryption.extend(baseClient);
 
     return new Proxy(this, {
       get: (target, property, receiver) => {
