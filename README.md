@@ -1,17 +1,21 @@
 # Paloma Mensajera - Backend
 
-API del Sistema Integral de Gestion, Ventas y Envios de Paloma Mensajera, construida con NestJS y Prisma. **PostgreSQL** es el motor de base de datos principal; SQLite queda disponible como alternativa liviana para desarrollo local sin instalar nada. El diseno vigente del sistema esta documentado en [SDD_Paloma_Mensajera.md](SDD_Paloma_Mensajera.md) (version anterior conservada en [SDD_Paloma_Mensajera_2.md](SDD_Paloma_Mensajera_2.md)).
+API del Sistema Integral de Gestion, Ventas y Envios de Paloma Mensajera, construida con NestJS y Prisma. **PostgreSQL** es el motor de base de datos principal; SQLite queda disponible como alternativa liviana para desarrollo local sin instalar nada. El diseno vigente del sistema esta documentado en [SDD_Paloma_Mensajera.md](SDD_Paloma_Mensajera.md) (versiones anteriores conservadas en [SDD_Paloma_Mensajera_2.md](SDD_Paloma_Mensajera_2.md)).
 
 ## Flujo de un pedido
 
-1. **`POST /orders/public`** - el comprador arma el carrito y escribe su dedicatoria. Pasa el filtro automatico y el pedido nace en `MESSAGE_PENDING_REVIEW` (aun sin tocar stock ni rifa).
-2. **`PATCH /orders/:id/verify-message`** (rol `verifier`) - revision humana final de la dedicatoria. Solo `MESSAGE_APPROVED` habilita el paso siguiente.
+1. **`POST /orders/public`** - el comprador arma el carrito, escribe su dedicatoria y decide si recoge el regalo el mismo (`selfPickup`) o indica un destinatario distinto. El pedido nace directo en `MESSAGE_PENDING_REVIEW` (sin ningun filtro automatico ni IA) - aun sin tocar stock ni rifa.
+2. **`PATCH /orders/:id/verify-message`** (rol `seller`, revision 100% manual) - el Vendedor busca al comprador por nombre en `GET /orders?view=message&search=...` y aprueba o rechaza la dedicatoria. Solo `MESSAGE_APPROVED` habilita el paso siguiente.
 3. **`POST /orders/:id/select-raffle-number`** - descuenta stock del carrito, asigna el numero de rifa de forma atomica y crea el pago pendiente (`PAYMENT_PENDING`).
-4. **`PATCH /orders/:id/verify-payment`** (rol `verifier`, o `seller` solo para sus propias ventas `PRESENCIAL`) - confirma o rechaza el pago contra Nequi.
-5. **`PATCH /orders/:id/assign-delivery`** + **`PATCH /orders/:id/delivery-status`** (rol `seller`, que fusiona venta y entrega) - notifica por Teams y confirma la entrega.
+4. **`PATCH /orders/:id/verify-payment`** (rol `admin`, **exclusivo, sin ninguna excepcion**) - confirma o rechaza el pago contra Nequi viendo el pedido completo.
+5. **`PATCH /orders/:id/assign-delivery`** + **`PATCH /orders/:id/delivery-status`** (rol `seller`, que fusiona venta y entrega) - notifica por Teams y confirma la entrega. Si `selfPickup=true`, no se notifica a un tercero (el destinatario es el propio comprador).
 6. **`POST /raffle-numbers/draw`** (admin, al cierre del evento) - sorteo con ruleta sobre los numeros con pago verificado.
 
-El rol `verifier` ya no revisa pagos exclusivamente: ahora tambien aprueba o rechaza cada dedicatoria (`messages:read_queue`, `messages:verify`) antes de que exista rifa. El rol `delivery` se mantiene en el sistema por compatibilidad, pero las cuentas nuevas usan `seller` (fusiona venta + entrega). Un administrador puede reasignar el rol de cualquier usuario o desactivar su acceso sin crear una cuenta nueva: `PATCH /users/:id/role` y `PATCH /users/:id/status` (rotacion de turnos, seccion 6 del SDD) — el cambio aplica de inmediato porque el rol y los permisos se re-consultan en cada request, no se confia en el JWT ya emitido.
+El rol `verifier` ya no existe (el SDD vigente lo elimina por completo): la revision de la dedicatoria pasa al Vendedor (`messages:read_queue`, `messages:verify`) y la verificacion de pago queda como tarea exclusiva del Administrador, sin ningun alcance para el Vendedor. La fila `verifier` no se borra de la base de datos si ya existia (para no romper una cuenta previa), pero el seed deja de otorgarle permisos. El rol `delivery` tampoco se elimina, por la misma razon, aunque las cuentas nuevas usan `seller`. Un administrador puede reasignar el rol de cualquier usuario (`ADMIN` o `SELLER`, seccion 7 del SDD) o desactivar su acceso sin crear una cuenta nueva: `PATCH /users/:id/role` y `PATCH /users/:id/status` — el cambio aplica de inmediato porque el rol y los permisos se re-consultan en cada request, no se confia en el JWT ya emitido.
+
+## Imagenes del catalogo
+
+`POST /products/:id/image` (rol `admin`, `multipart/form-data`, campo `file`) sube una imagen (JPEG/PNG/WebP, hasta `IMAGE_MAX_SIZE_MB`) y actualiza `Product.imageUrl`. Por defecto (`IMAGE_STORAGE_PROVIDER=LOCAL_FILESYSTEM`) se guarda en `uploads/products/<id>/` y se sirve como archivo estatico en `/uploads/...` - no requiere configurar nada mas. `IMAGE_STORAGE_PROVIDER=S3_COMPATIBLE` queda declarado en `.env` para cuando el equipo tenga un bucket real, pero todavia no esta implementado.
 
 ## Requisitos
 
@@ -46,7 +50,7 @@ npm run prisma:migrate:sqlite
 npm run prisma:seed
 ```
 
-El seed crea los permisos y roles nucleares (`admin`, `verifier`, `seller`, `delivery`, `comprador`), el mapa de numeros de rifa y, si `ADMIN_SEED_EMAIL` esta definido en `.env`, un usuario administrador inicial (con `ADMIN_SEED_PASSWORD` opcional, ver seccion siguiente). Lee `DATABASE_PROVIDER` para conectarse al mismo motor activo.
+El seed crea los permisos y roles nucleares (`admin`, `seller`, `comprador`; `verifier` y `delivery` quedan como roles legado sin mantenerse), el mapa de numeros de rifa y, si `ADMIN_SEED_EMAIL` esta definido en `.env`, un usuario administrador inicial (con `ADMIN_SEED_PASSWORD` opcional, ver seccion siguiente). Lee `DATABASE_PROVIDER` para conectarse al mismo motor activo.
 
 Si cambias el modelo de datos, aplica el cambio en **ambos** `schema.prisma` y genera una migracion para cada motor (`npm run prisma:migrate` y `npm run prisma:migrate:sqlite`).
 
@@ -85,14 +89,23 @@ docker compose down
 
 Para eliminar tambien la base de datos persistida, usa `docker compose down -v`.
 
+## Pruebas y CI/CD
+
+`src/**/*.spec.ts` contiene pruebas unitarias (Jest) de la logica de negocio mas critica: doble verificacion del pedido, autorrecogida, verificacion de pago exclusiva del admin, rotacion de roles, sorteo con `crypto.randomInt`, y el guard de permisos. Corren con `npm test` sin necesitar una base de datos real (Prisma va mockeado en cada spec).
+
+`.github/workflows/ci.yml` ejecuta en cada push/PR a `main`/`develop`: instalacion, generacion de clientes de Prisma, lint, chequeo de tipos, pruebas unitarias y build; un segundo job valida que la imagen de Docker siga construyendo. Ese build de Docker es el "CD" disponible por ahora - no hay un entorno de hosting real configurado todavia para desplegar automaticamente.
+
 ## Scripts
 
 | Script | Descripcion |
 | :--- | :--- |
 | `npm run start:dev` | Servidor en modo desarrollo (watch) |
 | `npm run build` | Compila a `dist/` |
-| `npm run lint` | ESLint + Prettier |
+| `npm run lint` | ESLint + Prettier (con `--fix`) |
+| `npm run lint:check` | ESLint sin `--fix` (el que corre en CI) |
+| `npm run typecheck` | Chequeo de tipos sin emitir (`tsc --noEmit`) |
 | `npm test` | Pruebas unitarias |
+| `npm run test:cov` | Pruebas unitarias con reporte de cobertura |
 | `npm run prisma:generate` | Genera los clientes de Prisma (Postgres y SQLite) |
 | `npm run prisma:migrate` | Aplica migraciones de Prisma (Postgres) |
 | `npm run prisma:migrate:sqlite` | Aplica migraciones de Prisma (SQLite) |
