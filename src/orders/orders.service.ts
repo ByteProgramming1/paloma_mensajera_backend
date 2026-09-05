@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { MailerService } from '../mailer/mailer.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { VerifyMessageDto } from './dto/verify-message.dto';
 import { SelectRaffleNumberDto } from './dto/select-raffle-number.dto';
@@ -35,7 +36,10 @@ interface ActingUser {
 
 @Injectable()
 export class OrdersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly mailerService: MailerService,
+  ) {}
 
   // Crea el pedido directo en MESSAGE_PENDING_REVIEW - sin ningun filtro
   // automatico ni IA (seccion 2 y 8.1 del SDD vigente): toda dedicatoria pasa
@@ -281,7 +285,7 @@ export class OrdersService {
       throw new BadRequestException('receivedBy es obligatorio para confirmar la entrega.');
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const { updatedAssignment, deliveryDetail } = await this.prisma.$transaction(async (tx) => {
       const updatedAssignment = await tx.deliveryAssignment.update({
         where: { id: assignment.id },
         data: {
@@ -298,8 +302,24 @@ export class OrdersService {
         data: { status: this.mapDeliveryStatusToOrderStatus(dto.status) },
       });
 
-      return updatedAssignment;
+      const deliveryDetail = isDelivered
+        ? await tx.deliveryDetail.findUnique({ where: { orderId } })
+        : null;
+
+      return { updatedAssignment, deliveryDetail };
     });
+
+    // Notificacion al comprador (seccion "entrega" del SDD): se envia fuera de
+    // la transaccion (I/O externo) y no bloquea la confirmacion de entrega si
+    // el correo falla - ver MailerService.sendDeliveryConfirmation.
+    if (deliveryDetail) {
+      await this.mailerService.sendDeliveryConfirmation(
+        deliveryDetail.buyerEmail,
+        deliveryDetail.buyerFullName,
+      );
+    }
+
+    return updatedAssignment;
   }
 
   async findAllFull() {
