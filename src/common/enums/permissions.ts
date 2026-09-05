@@ -43,24 +43,25 @@ export const PERMISSION_DEFINITIONS: Array<{
 
 // admin siempre recibe todos los permisos (ver 5.1 nota de visibilidad total del admin)
 //
-// El rol `delivery` se mantiene tal cual (no se elimina, para no romper cuentas
-// ya creadas con ese rol), aunque el SDD vigente fusiono sus funciones dentro
-// de `seller`: las cuentas nuevas ya no necesitan ese rol por separado.
+// El rol `verifier` ya no se mantiene en esta matriz (el SDD vigente lo elimina
+// por completo: la revision de mensajes pasa al Vendedor y el pago queda como
+// tarea exclusiva del Administrador, sin ningun alcance para el Vendedor). No
+// se borra la fila de la base de datos si ya existe una cuenta con ese rol
+// (evita romperla), pero el seed deja de otorgarle permisos.
+//
+// El rol `delivery` se mantiene igual, por la misma razon: ya no se usa para
+// cuentas nuevas (fusionado en `seller`), pero no se elimina lo existente.
 export const ROLE_PERMISSION_MATRIX: Record<string, Permissions[]> = {
   admin: PERMISSION_DEFINITIONS.map((p) => p.slug),
-  verifier: [
-    Permissions.ORDERS_READ_PAYMENT_INFO,
-    Permissions.ORDERS_VERIFY_PAYMENT,
-    Permissions.MESSAGES_READ_QUEUE,
-    Permissions.MESSAGES_VERIFY,
-  ],
-  // Vendedor: fusiona venta, entrega (antes "delivery") y verificacion de pago
-  // acotada a sus propias ventas presenciales (ver OrdersService.verifyPayment).
+  // Vendedor: fusiona venta, entrega, y ahora tambien la revision manual de la
+  // dedicatoria (antes del Verificador). Ya NO tiene orders:verify_payment:
+  // la confirmacion de pago es exclusiva del Administrador, sin excepciones
+  // ni alcance acotado (ver OrdersService.verifyPayment y HU-05 del SDD).
   seller: [
     Permissions.ORDERS_READ_PUBLIC_SAFE,
     Permissions.ORDERS_UPDATE_DELIVERY,
-    Permissions.ORDERS_READ_PAYMENT_INFO,
-    Permissions.ORDERS_VERIFY_PAYMENT,
+    Permissions.MESSAGES_READ_QUEUE,
+    Permissions.MESSAGES_VERIFY,
     Permissions.PRODUCTS_READ_ACTIVE,
   ],
   delivery: [
