@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -8,22 +9,33 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ModerationService } from '../moderation/moderation.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { ValidateMessageDto } from './dto/validate-message.dto';
+import { VerifyMessageDto } from './dto/verify-message.dto';
+import { SelectRaffleNumberDto } from './dto/select-raffle-number.dto';
 import { VerifyPaymentDto } from './dto/verify-payment.dto';
 import { AssignDeliveryDto } from './dto/assign-delivery.dto';
 import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
 import { buildOrderCode } from './order-code.util';
 import {
   DeliveryAssignmentStatus,
+  HumanReviewStatus,
   OrderStatus,
   PaymentMethod,
   RaffleNumberStatus,
+  RoleSlug,
+  SalesChannel,
 } from '../common/enums/domain.enums';
 import {
   ORDER_WITH_RELATIONS,
   serializeOrderFull,
+  serializeOrderMessageView,
   serializeOrderPaymentView,
   serializeOrderSafe,
 } from './orders.serializer';
+
+interface ActingUser {
+  userId: string;
+  roleSlug: string;
+}
 
 @Injectable()
 export class OrdersService {
@@ -36,18 +48,97 @@ export class OrdersService {
     return this.moderationService.moderateMessage(dto.letterContent);
   }
 
+  // PASO 1: filtro automatico como primer descarte - si pasa, el pedido nace
+  // en MESSAGE_PENDING_REVIEW, a la espera de la revision humana final del
+  // Verificador (seccion 2 y 8.2 del SDD). No se toca stock ni rifa todavia.
   async createPublicOrder(dto: CreateOrderDto) {
-    // Revalidacion defensiva de la dedicatoria (el frontend ya la valido antes de
-    // mostrar el mapa de rifa) - seccion 3.2 y 7.3 del SDD.
-    const moderation = await this.moderationService.moderateMessage(dto.letterContent);
-    if (!moderation.approved) {
-      throw new BadRequestException(moderation.reason ?? 'El mensaje no pudo ser aprobado.');
+    const filter = await this.moderationService.moderateMessage(dto.letterContent);
+    if (!filter.approved) {
+      throw new BadRequestException(filter.reason ?? 'El mensaje no pudo ser aprobado.');
+    }
+
+    const orderSequence = (await this.prisma.order.count()) + 1;
+
+    return this.prisma.order.create({
+      data: {
+        orderCode: buildOrderCode(orderSequence),
+        status: OrderStatus.MESSAGE_PENDING_REVIEW,
+        salesChannel: dto.salesChannel,
+        assistedBySellerId: dto.assistedBySellerId ?? null,
+        deliveryDetail: {
+          create: {
+            buyerName: dto.buyerName,
+            buyerEmail: dto.buyerEmail,
+            buyerPhone: dto.buyerPhone,
+            recipientName: dto.recipientName,
+            recipientTeamsUser: dto.recipientTeamsUser,
+            letterContent: dto.letterContent,
+            isAnonymous: dto.isAnonymous,
+            contentModerationMethod: filter.method,
+          },
+        },
+        items: {
+          create: dto.cartItems.map((item) => ({
+            productId: item.productId,
+            quantity: item.quantity,
+          })),
+        },
+        messageReview: {
+          create: { automaticFilterMethod: filter.method, automaticFilterPassed: true },
+        },
+      },
+    });
+  }
+
+  // PASO 2: revision humana final de la dedicatoria - rol Verificador, unico
+  // gate real que habilita el mapa de rifa (seccion 3.3 y HU-03 del SDD).
+  async verifyMessage(orderId: string, verifierId: string, dto: VerifyMessageDto) {
+    const order = await this.findOrderOrThrow(orderId);
+    if (
+      order.status !== OrderStatus.MESSAGE_PENDING_REVIEW &&
+      order.status !== OrderStatus.MESSAGE_REJECTED
+    ) {
+      throw new BadRequestException('Este pedido no tiene una dedicatoria pendiente de revision.');
+    }
+    if (!dto.approved && !dto.rejectionReason) {
+      throw new BadRequestException('rejectionReason es obligatorio cuando approved es false.');
     }
 
     return this.prisma.$transaction(async (tx) => {
+      await tx.order.update({
+        where: { id: orderId },
+        data: {
+          status: dto.approved ? OrderStatus.MESSAGE_APPROVED : OrderStatus.MESSAGE_REJECTED,
+        },
+      });
+
+      return tx.messageReview.update({
+        where: { orderId },
+        data: {
+          humanReviewStatus: dto.approved ? HumanReviewStatus.APPROVED : HumanReviewStatus.REJECTED,
+          reviewedByUserId: verifierId,
+          reviewedAt: new Date(),
+          rejectionReason: dto.approved ? null : dto.rejectionReason,
+        },
+      });
+    });
+  }
+
+  // PASO 3: solo con MESSAGE_APPROVED - descuenta stock del carrito, asigna el
+  // numero de rifa de forma atomica y crea el pago pendiente (seccion 8.2).
+  async selectRaffleNumber(orderId: string, dto: SelectRaffleNumberDto) {
+    const order = await this.findOrderOrThrow(orderId);
+    if (order.status !== OrderStatus.MESSAGE_APPROVED) {
+      throw new BadRequestException(
+        'Este pedido aun no tiene la dedicatoria aprobada por el Verificador.',
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const items = await tx.orderItem.findMany({ where: { orderId } });
+
       let totalAmount = 0;
-      const unitPricesByProductId = new Map<string, number>();
-      for (const item of dto.cartItems) {
+      for (const item of items) {
         const product = await tx.product.findUnique({ where: { id: item.productId } });
         if (!product || !product.isActive || product.stock < item.quantity) {
           throw new BadRequestException(
@@ -58,7 +149,10 @@ export class OrdersService {
           where: { id: item.productId },
           data: { stock: { decrement: item.quantity } },
         });
-        unitPricesByProductId.set(item.productId, product.price);
+        await tx.orderItem.update({
+          where: { id: item.id },
+          data: { unitPrice: product.price },
+        });
         totalAmount += product.price * item.quantity;
       }
 
@@ -70,52 +164,39 @@ export class OrdersService {
       if (raffleUpdate.count === 0) {
         throw new ConflictException('Ese numero de rifa ya fue tomado. Por favor elige otro.');
       }
-
-      const orderSequence = (await tx.order.count()) + 1;
-
-      const order = await tx.order.create({
-        data: {
-          orderCode: buildOrderCode(orderSequence),
-          status: OrderStatus.PAYMENT_PENDING,
-          totalAmount,
-          salesChannel: dto.salesChannel,
-          assistedBySellerId: dto.assistedBySellerId ?? null,
-          deliveryDetail: {
-            create: {
-              buyerName: dto.buyerName,
-              buyerEmail: dto.buyerEmail,
-              buyerPhone: dto.buyerPhone,
-              recipientName: dto.recipientName,
-              recipientTeamsUser: dto.recipientTeamsUser,
-              letterContent: dto.letterContent,
-              isAnonymous: dto.isAnonymous,
-              contentModerationMethod: moderation.method,
-            },
-          },
-          items: {
-            create: dto.cartItems.map((item) => ({
-              productId: item.productId,
-              quantity: item.quantity,
-              unitPrice: unitPricesByProductId.get(item.productId)!,
-            })),
-          },
-          paymentTransaction: {
-            create: { paymentMethod: PaymentMethod.NEQUI, verified: false },
-          },
-        },
-      });
-
       await tx.raffleNumber.update({
         where: { id: dto.raffleNumberId },
-        data: { orderId: order.id },
+        data: { orderId },
       });
 
-      return order;
+      await tx.paymentTransaction.create({
+        data: { orderId, paymentMethod: PaymentMethod.NEQUI, verified: false },
+      });
+
+      return tx.order.update({
+        where: { id: orderId },
+        data: { status: OrderStatus.PAYMENT_PENDING, totalAmount },
+      });
     });
   }
 
-  async verifyPayment(orderId: string, verifierId: string, dto: VerifyPaymentDto) {
+  // Confirma/rechaza el pago. El Verificador puede hacerlo con cualquier
+  // pedido; el Vendedor solo con sus propias ventas presenciales, aunque
+  // tenga el permiso base orders:verify_payment (seccion 3.4 y HU-06 del SDD).
+  async verifyPayment(orderId: string, actingUser: ActingUser, dto: VerifyPaymentDto) {
     const order = await this.findOrderOrThrow(orderId);
+
+    if (actingUser.roleSlug === RoleSlug.SELLER) {
+      if (
+        order.salesChannel !== SalesChannel.PRESENCIAL ||
+        order.assistedBySellerId !== actingUser.userId
+      ) {
+        throw new ForbiddenException(
+          'Solo puedes confirmar el pago de ventas presenciales que tu mismo atendiste.',
+        );
+      }
+    }
+
     if (order.status !== OrderStatus.PAYMENT_PENDING) {
       throw new BadRequestException('Este pedido ya fue verificado.');
     }
@@ -148,7 +229,7 @@ export class OrdersService {
         where: { orderId },
         data: {
           verified: dto.verified,
-          verifiedByUserId: verifierId,
+          verifiedByUserId: actingUser.userId,
           verifiedAt: new Date(),
           verificationNotes: dto.verificationNotes,
         },
@@ -161,6 +242,19 @@ export class OrdersService {
     if (order.status !== OrderStatus.PAYMENT_VERIFIED) {
       throw new BadRequestException(
         'Solo se puede asignar un encargado a pedidos con pago verificado.',
+      );
+    }
+
+    const deliveryPerson = await this.prisma.user.findUnique({
+      where: { id: dto.deliveryPersonId },
+      include: { role: true },
+    });
+    if (
+      !deliveryPerson ||
+      ![RoleSlug.SELLER, RoleSlug.DELIVERY].includes(deliveryPerson.role.slug as RoleSlug)
+    ) {
+      throw new BadRequestException(
+        'El responsable de entrega debe ser un usuario con rol Vendedor.',
       );
     }
 
@@ -226,11 +320,27 @@ export class OrdersService {
     return orders.map(serializeOrderSafe);
   }
 
-  async findPaymentView(search?: string) {
+  // Cola de dedicatorias pendientes para el Verificador (seccion 3.2 y HU-03).
+  async findMessageQueue() {
+    const orders = await this.prisma.order.findMany({
+      ...ORDER_WITH_RELATIONS,
+      where: { status: OrderStatus.MESSAGE_PENDING_REVIEW },
+      orderBy: { createdAt: 'asc' },
+    });
+    return orders.map(serializeOrderMessageView);
+  }
+
+  // Verificador: ve todos los pendientes de pago. Vendedor: solo los propios
+  // presenciales (seccion 3.4 y HU-06 del SDD).
+  async findPaymentView(actingUser: ActingUser, search?: string) {
+    const isSeller = actingUser.roleSlug === RoleSlug.SELLER;
     const orders = await this.prisma.order.findMany({
       ...ORDER_WITH_RELATIONS,
       where: {
         status: OrderStatus.PAYMENT_PENDING,
+        ...(isSeller
+          ? { salesChannel: SalesChannel.PRESENCIAL, assistedBySellerId: actingUser.userId }
+          : {}),
         ...(search ? { deliveryDetail: { buyerName: { contains: search } } } : {}),
       },
       orderBy: { createdAt: 'asc' },

@@ -1,8 +1,12 @@
-import { Prisma } from '@prisma/client';
+// Se tipa contra el cliente generado de Postgres (motor principal), no contra
+// el paquete generico `@prisma/client` (sus tipos por defecto quedan
+// desactualizados porque ya no generamos ahi - ver src/prisma/prisma.service.ts).
+import { Prisma } from '../../prisma/postgresql/generated';
 
 export const ORDER_WITH_RELATIONS = Prisma.validator<Prisma.OrderDefaultArgs>()({
   include: {
     deliveryDetail: true,
+    messageReview: true,
     paymentTransaction: true,
     raffleNumber: { select: { id: true, number: true, status: true } },
     items: { include: { product: true } },
@@ -43,6 +47,14 @@ export function serializeOrderFull(order: OrderWithRelations) {
     isAnonymous: order.deliveryDetail?.isAnonymous,
     teamsNotificationSent: order.deliveryDetail?.teamsNotificationSent,
     payment: order.paymentTransaction,
+    messageReview: order.messageReview
+      ? {
+          humanReviewStatus: order.messageReview.humanReviewStatus,
+          rejectionReason: order.messageReview.rejectionReason,
+          reviewedByUserId: order.messageReview.reviewedByUserId,
+          reviewedAt: order.messageReview.reviewedAt,
+        }
+      : null,
   };
 }
 
@@ -58,6 +70,16 @@ export function serializeOrderSafe(order: OrderWithRelations) {
     letterContent: order.deliveryDetail?.letterContent,
     isAnonymous,
     teamsNotificationSent: order.deliveryDetail?.teamsNotificationSent,
+  };
+}
+
+// OrderMessageView de la cola del Verificador (seccion 3.2): unicamente la
+// dedicatoria, sin ninguna identidad (ni remitente, ni destinatario, ni carrito).
+export function serializeOrderMessageView(order: OrderWithRelations) {
+  return {
+    orderId: order.id,
+    orderCode: order.orderCode,
+    letterContent: order.deliveryDetail?.letterContent,
   };
 }
 

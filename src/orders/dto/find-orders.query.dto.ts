@@ -2,8 +2,8 @@ import { IsIn, IsOptional, IsString } from 'class-validator';
 
 export class FindOrdersQueryDto {
   @IsOptional()
-  @IsIn(['payment'])
-  view?: 'payment';
+  @IsIn(['payment', 'message'])
+  view?: 'payment' | 'message';
 
   @IsOptional()
   @IsString()

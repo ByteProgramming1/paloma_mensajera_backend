@@ -63,7 +63,4 @@ export class CreateOrderDto {
 
   @IsIn(Object.values(SalesChannel))
   salesChannel: SalesChannel;
-
-  @IsUUID()
-  raffleNumberId: string;
 }

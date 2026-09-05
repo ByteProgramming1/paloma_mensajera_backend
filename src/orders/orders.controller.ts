@@ -18,6 +18,8 @@ import { OrdersService } from './orders.service';
 import { TeamsNotificationService } from '../notifications/teams-notification.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { ValidateMessageDto } from './dto/validate-message.dto';
+import { VerifyMessageDto } from './dto/verify-message.dto';
+import { SelectRaffleNumberDto } from './dto/select-raffle-number.dto';
 import { VerifyPaymentDto } from './dto/verify-payment.dto';
 import { AssignDeliveryDto } from './dto/assign-delivery.dto';
 import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
@@ -51,9 +53,14 @@ export class OrdersController {
 
   @Get()
   findOrders(@CurrentUser() user: AuthenticatedUser, @Query() query: FindOrdersQueryDto) {
+    if (query.view === 'message') {
+      this.assertPermission(user, Permissions.MESSAGES_READ_QUEUE);
+      return this.ordersService.findMessageQueue();
+    }
+
     if (query.view === 'payment') {
       this.assertPermission(user, Permissions.ORDERS_READ_PAYMENT_INFO);
-      return this.ordersService.findPaymentView(query.search);
+      return this.ordersService.findPaymentView(user, query.search);
     }
 
     if (query.recipientName) {
@@ -71,6 +78,22 @@ export class OrdersController {
     return this.ordersService.findAllSafe();
   }
 
+  @RequirePermissions(Permissions.MESSAGES_VERIFY)
+  @Patch(':id/verify-message')
+  verifyMessage(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: VerifyMessageDto,
+  ) {
+    return this.ordersService.verifyMessage(id, user.userId, dto);
+  }
+
+  @RequirePermissions(Permissions.RAFFLE_SELECT_NUMBER)
+  @Post(':id/select-raffle-number')
+  selectRaffleNumber(@Param('id') id: string, @Body() dto: SelectRaffleNumberDto) {
+    return this.ordersService.selectRaffleNumber(id, dto);
+  }
+
   @RequirePermissions(Permissions.ORDERS_VERIFY_PAYMENT)
   @Patch(':id/verify-payment')
   verifyPayment(
@@ -78,7 +101,7 @@ export class OrdersController {
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: VerifyPaymentDto,
   ) {
-    return this.ordersService.verifyPayment(id, user.userId, dto);
+    return this.ordersService.verifyPayment(id, user, dto);
   }
 
   @RequirePermissions(Permissions.ORDERS_ASSIGN_DELIVERY)
