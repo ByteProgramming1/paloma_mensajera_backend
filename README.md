@@ -54,21 +54,29 @@ El seed crea los permisos y roles nucleares (`admin`, `seller`, `comprador`; `ve
 
 Si cambias el modelo de datos, aplica el cambio en **ambos** `schema.prisma` y genera una migracion para cada motor (`npm run prisma:migrate` y `npm run prisma:migrate:sqlite`).
 
-## Inicio de sesion con Microsoft Entra ID
+## Auto-registro con verificacion de correo
 
-El acceso institucional se hace con la cuenta de Microsoft de la universidad (Entra ID / Azure AD), igual que Moodle. El backend **no crea cuentas nuevas por si solo**: un administrador debe pre-autorizar cada correo institucional con un rol via `POST /auth/temporary-user` (o el seed inicial, `ADMIN_SEED_EMAIL`); recien despues esa persona puede iniciar sesion con su cuenta de Microsoft.
+El acceso institucional se controla sin depender de Microsoft/Azure AD: **cualquier persona con un correo de los dominios institucionales configurados puede crear su propia cuenta**, probando que realmente tiene acceso a ese buzon mediante un codigo de un solo uso enviado por correo (SMTP), no solo revisando el sufijo del email.
 
-La app registration **no tiene que crearse dentro del tenant de la universidad ni requiere permisos de TI**: cualquier cuenta personal de Microsoft puede registrarla, siempre que se configure como multi-tenant.
+1. `POST /auth/register` con `{ "email", "name", "password" }` (el correo debe terminar en alguno de los dominios de `INSTITUTIONAL_EMAIL_DOMAIN`). Crea (o reutiliza, si aun no se ha verificado) la cuenta con el rol `comprador`, genera un codigo de 6 digitos valido por 15 minutos y lo envia por correo. La respuesta nunca incluye el codigo.
+2. `POST /auth/verify-email` con `{ "email", "code" }`. Si el codigo es correcto y no ha expirado, la cuenta queda verificada (`emailVerifiedAt`) y la respuesta ya incluye la sesion (mismo formato que `POST /auth/login`).
+3. `POST /auth/login` rechaza con `401` a las cuentas con password que aun no verificaron su correo. Las cuentas creadas por un administrador (`POST /auth/temporary-user`) quedan verificadas de inmediato, porque ya hay alguien que dio fe de esa identidad.
 
-1. En [Azure Portal](https://portal.azure.com) → Microsoft Entra ID → App registrations, crea una app con una cuenta personal de Microsoft (no institucional). En "Supported account types" elige **"Accounts in any organizational directory (Any Microsoft Entra ID tenant - Multitenant)"**, y como plataforma de redireccion usa **SPA** (autenticacion delegada, flujo con PKCE via MSAL). Copia el `Application (client) ID`.
+Requiere las variables `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER` y `SMTP_PASSWORD` en `.env` (puede ser una cuenta de Gmail/Outlook con una "contrasena de aplicacion", o cualquier proveedor SMTP). Sin `SMTP_HOST` configurado, `POST /auth/register` responde `503` en vez de fallar silenciosamente.
+
+## Inicio de sesion con Microsoft Entra ID (opcional, no activo por ahora)
+
+El backend tambien soporta login con la cuenta de Microsoft de la universidad (Entra ID / Azure AD) via `POST /auth/microsoft`, como alternativa a la verificacion por correo. **Por ahora el equipo decidio no perseguir esta via**: registrar la app requiere que quien la crea tenga su propio directorio de Entra ID, y desde que Microsoft descontinuo permitir crear apps sin uno, conseguir ese directorio gratis (Microsoft 365 Developer Program, Azure Free Trial, GitHub Student Pack) o bien no siempre aprueba automaticamente, o bien pide una tarjeta de credito/debito para verificar identidad — el equipo prefirio no usar ninguna tarjeta. El tenant real de la universidad, ademas, tiene bloqueado que las cuentas institucionales normales registren apps por su cuenta.
+
+El codigo queda listo para cuando alguien consiga un directorio propio sin tarjeta:
+
+1. En [Azure Portal](https://portal.azure.com) → Microsoft Entra ID → App registrations, crea una app con una cuenta que tenga su propio directorio (no puede ser una cuenta personal sin directorio - ver parrafo anterior). En "Supported account types" elige **"Accounts in any organizational directory (Any Microsoft Entra ID tenant - Multitenant)"**, y como plataforma de redireccion usa **SPA** (autenticacion delegada, flujo con PKCE via MSAL). Copia el `Application (client) ID`.
 2. `AZURE_AD_TENANT_ID` **no es el tenant de quien registra la app**, sino el tenant real de la universidad — es un dato publico, no requiere ningun permiso: se obtiene de `https://login.microsoftonline.com/<dominio-institucional>/v2.0/.well-known/openid-configuration` (campo `issuer`). Para `escuelaing.edu.co` es `50640584-2a40-4216-a84b-9b3ee0f3f6cf`.
 3. Define `AZURE_AD_TENANT_ID` (el de la universidad, del paso anterior) y `AZURE_AD_CLIENT_ID` (el de la app registrada en el paso 1) en `.env`.
 4. El frontend usa MSAL, autenticando contra la autoridad `https://login.microsoftonline.com/<AZURE_AD_TENANT_ID>` (o `/organizations`), y obtiene un `id_token`; ese token se envia a `POST /auth/microsoft` con `{ "idToken": "..." }`.
-5. El backend valida la firma del token contra el JWKS de ese mismo tenant (`AZURE_AD_TENANT_ID`) y su `issuer`/`audience`, y ademas confirma en codigo que el correo (`assertInstitutionalEmail`) termina en un dominio institucional — esta doble validacion es la que permite usar una app multi-tenant sin que TI tenga que autorizar ni instalar nada: el registro de la app es independiente de quien puede iniciar sesion en ella.
+5. El backend valida la firma del token contra el JWKS de ese mismo tenant (`AZURE_AD_TENANT_ID`) y su `issuer`/`audience`, y ademas confirma en codigo que el correo (`assertInstitutionalEmail`) termina en un dominio institucional.
 
-Sin `AZURE_AD_TENANT_ID`/`AZURE_AD_CLIENT_ID` configurados, `POST /auth/microsoft` responde `503` y el login local por correo/password (`POST /auth/login`) sigue disponible como respaldo para desarrollo (misma logica de degradacion controlada que la notificacion por Teams, seccion 11 del SDD). Una cuenta creada sin `password` (ver `CreateTemporaryUserDto`) solo puede iniciar sesion con Microsoft.
-
-> El auto-registro con codigo de verificacion por correo (`POST /auth/register` / `POST /auth/verify-email`) se probo como alternativa cuando se penso que Entra ID iba a requerir permisos de TI, pero quedo deshabilitado a favor de Microsoft SSO por mejor experiencia de usuario. El codigo (`AuthService.register`/`verifyEmail`, `EmailVerificationCode` en el schema) se dejo intacto sin exponerse por HTTP, por si se necesita retomar mas adelante.
+Sin `AZURE_AD_TENANT_ID`/`AZURE_AD_CLIENT_ID` configurados, `POST /auth/microsoft` responde `503` — que es el estado actual del proyecto. Una cuenta creada sin `password` (ver `CreateTemporaryUserDto`) solo podria iniciar sesion con Microsoft, asi que mientras esto no se configure no se deberian crear cuentas asi.
 
 ## Ejecucion
 
