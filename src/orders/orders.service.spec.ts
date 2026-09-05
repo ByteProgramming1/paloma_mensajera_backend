@@ -1,0 +1,283 @@
+import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import { OrdersService } from './orders.service';
+import {
+  BuyerType,
+  HumanReviewStatus,
+  OrderStatus,
+  RoleSlug,
+  SalesChannel,
+} from '../common/enums/domain.enums';
+
+function buildPrismaMock(overrides: Record<string, unknown> = {}) {
+  const tx = {
+    order: { update: jest.fn(), findUniqueOrThrow: jest.fn() },
+    orderItem: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn() },
+    product: { findUnique: jest.fn(), update: jest.fn() },
+    raffleNumber: { updateMany: jest.fn(), update: jest.fn() },
+    paymentTransaction: { create: jest.fn(), update: jest.fn() },
+    messageReview: { update: jest.fn() },
+    deliveryAssignment: { create: jest.fn() },
+  };
+
+  type Tx = typeof tx;
+
+  return {
+    order: {
+      count: jest.fn().mockResolvedValue(0),
+      create: jest.fn(),
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+    },
+    user: { findUnique: jest.fn() },
+    deliveryAssignment: { findFirst: jest.fn() },
+    $transaction: jest.fn(async (callback: (tx: Tx) => unknown) => callback(tx)),
+    __tx: tx,
+    ...overrides,
+  };
+}
+
+describe('OrdersService', () => {
+  describe('createPublicOrder', () => {
+    const baseDto = {
+      buyerFullName: 'Ana Compradora',
+      buyerEmail: 'ana@escuelaing.edu.co',
+      buyerPhone: '3001234567',
+      buyerType: BuyerType.ESTUDIANTE,
+      buyerCareerOrArea: 'Ingenieria de Sistemas',
+      cartItems: [{ productId: 'p1', quantity: 1 }],
+      letterContent: 'Feliz dia!',
+      isAnonymous: false,
+      salesChannel: SalesChannel.ONLINE,
+    };
+
+    it('copia los datos del comprador al destinatario cuando selfPickup es true', async () => {
+      const prisma = buildPrismaMock();
+      const service = new OrdersService(prisma as never);
+
+      await service.createPublicOrder({
+        ...baseDto,
+        selfPickup: true,
+        deliveryNotes: 'Paso a las 3pm',
+      } as never);
+
+      const createArgs = prisma.order.create.mock.calls[0][0];
+      expect(createArgs.data.status).toBe(OrderStatus.MESSAGE_PENDING_REVIEW);
+      expect(createArgs.data.deliveryDetail.create.recipientFullName).toBe('Ana Compradora');
+      expect(createArgs.data.deliveryDetail.create.recipientTeamsUser).toBe(
+        'ana@escuelaing.edu.co',
+      );
+      expect(createArgs.data.deliveryDetail.create.deliveryNotes).toBe('Paso a las 3pm');
+      expect(createArgs.data.messageReview.create.humanReviewStatus).toBe(
+        HumanReviewStatus.PENDING,
+      );
+    });
+
+    it('usa los datos del destinatario indicado cuando selfPickup es false', async () => {
+      const prisma = buildPrismaMock();
+      const service = new OrdersService(prisma as never);
+
+      await service.createPublicOrder({
+        ...baseDto,
+        selfPickup: false,
+        recipientFullName: 'Otro Destino',
+        recipientCareerOrArea: 'Administracion',
+        recipientTeamsUser: 'otro@escuelaing.edu.co',
+      } as never);
+
+      const createArgs = prisma.order.create.mock.calls[0][0];
+      expect(createArgs.data.deliveryDetail.create.recipientFullName).toBe('Otro Destino');
+      expect(createArgs.data.deliveryDetail.create.recipientTeamsUser).toBe(
+        'otro@escuelaing.edu.co',
+      );
+      expect(createArgs.data.deliveryDetail.create.deliveryNotes).toBeNull();
+    });
+  });
+
+  describe('verifyMessage', () => {
+    it('rechaza si el pedido no esta pendiente de revision', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({ id: 'o1', status: OrderStatus.PAYMENT_PENDING });
+      const service = new OrdersService(prisma as never);
+
+      await expect(
+        service.verifyMessage('o1', 'reviewer1', { approved: true } as never),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('exige rejectionReason cuando approved es false', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'o1',
+        status: OrderStatus.MESSAGE_PENDING_REVIEW,
+      });
+      const service = new OrdersService(prisma as never);
+
+      await expect(
+        service.verifyMessage('o1', 'reviewer1', { approved: false } as never),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('aprueba el mensaje y limpia el motivo de rechazo', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'o1',
+        status: OrderStatus.MESSAGE_PENDING_REVIEW,
+      });
+      const service = new OrdersService(prisma as never);
+
+      await service.verifyMessage('o1', 'reviewer1', { approved: true } as never);
+
+      expect(prisma.__tx.order.update).toHaveBeenCalledWith({
+        where: { id: 'o1' },
+        data: { status: OrderStatus.MESSAGE_APPROVED },
+      });
+      const reviewUpdate = prisma.__tx.messageReview.update.mock.calls[0][0];
+      expect(reviewUpdate.data.humanReviewStatus).toBe(HumanReviewStatus.APPROVED);
+      expect(reviewUpdate.data.rejectionReason).toBeNull();
+      expect(reviewUpdate.data.reviewedByUserId).toBe('reviewer1');
+    });
+
+    it('permite re-revisar un pedido previamente rechazado', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({ id: 'o1', status: OrderStatus.MESSAGE_REJECTED });
+      const service = new OrdersService(prisma as never);
+
+      await service.verifyMessage('o1', 'reviewer1', { approved: true } as never);
+
+      expect(prisma.__tx.order.update).toHaveBeenCalledWith({
+        where: { id: 'o1' },
+        data: { status: OrderStatus.MESSAGE_APPROVED },
+      });
+    });
+  });
+
+  describe('selectRaffleNumber', () => {
+    it('rechaza si el mensaje no esta aprobado', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'o1',
+        status: OrderStatus.MESSAGE_PENDING_REVIEW,
+      });
+      const service = new OrdersService(prisma as never);
+
+      await expect(service.selectRaffleNumber('o1', { raffleNumberId: 'r1' })).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('lanza 409 si el numero de rifa ya fue tomado', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({ id: 'o1', status: OrderStatus.MESSAGE_APPROVED });
+      prisma.__tx.orderItem.findMany.mockResolvedValue([
+        { id: 'i1', productId: 'p1', quantity: 1 },
+      ]);
+      prisma.__tx.product.findUnique.mockResolvedValue({
+        id: 'p1',
+        name: 'Combo',
+        isActive: true,
+        stock: 5,
+        price: 1000,
+      });
+      prisma.__tx.raffleNumber.updateMany.mockResolvedValue({ count: 0 });
+      const service = new OrdersService(prisma as never);
+
+      await expect(service.selectRaffleNumber('o1', { raffleNumberId: 'r1' })).rejects.toThrow(
+        ConflictException,
+      );
+    });
+
+    it('rechaza si el stock es insuficiente', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({ id: 'o1', status: OrderStatus.MESSAGE_APPROVED });
+      prisma.__tx.orderItem.findMany.mockResolvedValue([
+        { id: 'i1', productId: 'p1', quantity: 5 },
+      ]);
+      prisma.__tx.product.findUnique.mockResolvedValue({
+        id: 'p1',
+        name: 'Combo',
+        isActive: true,
+        stock: 1,
+        price: 1000,
+      });
+      const service = new OrdersService(prisma as never);
+
+      await expect(service.selectRaffleNumber('o1', { raffleNumberId: 'r1' })).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+  });
+
+  describe('verifyPayment', () => {
+    it('rechaza a cualquiera que no sea admin, incluso al vendedor de la venta', async () => {
+      const prisma = buildPrismaMock();
+      const service = new OrdersService(prisma as never);
+
+      await expect(
+        service.verifyPayment('o1', { userId: 'seller1', roleSlug: RoleSlug.SELLER }, {
+          verified: true,
+        } as never),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.order.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('rechaza si el pedido no esta en PAYMENT_PENDING', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({ id: 'o1', status: OrderStatus.PAYMENT_VERIFIED });
+      const service = new OrdersService(prisma as never);
+
+      await expect(
+        service.verifyPayment('o1', { userId: 'admin1', roleSlug: RoleSlug.ADMIN }, {
+          verified: true,
+        } as never),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('al rechazar el pago, libera la rifa y restaura el stock del carrito', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({ id: 'o1', status: OrderStatus.PAYMENT_PENDING });
+      prisma.__tx.orderItem.findMany.mockResolvedValue([
+        { id: 'i1', productId: 'p1', quantity: 2 },
+      ]);
+      const service = new OrdersService(prisma as never);
+
+      await service.verifyPayment('o1', { userId: 'admin1', roleSlug: RoleSlug.ADMIN }, {
+        verified: false,
+      } as never);
+
+      expect(prisma.__tx.raffleNumber.updateMany).toHaveBeenCalledWith({
+        where: { orderId: 'o1' },
+        data: { status: 'AVAILABLE', orderId: null },
+      });
+      expect(prisma.__tx.product.update).toHaveBeenCalledWith({
+        where: { id: 'p1' },
+        data: { stock: { increment: 2 } },
+      });
+      const paymentUpdate = prisma.__tx.paymentTransaction.update.mock.calls[0][0];
+      expect(paymentUpdate.data.verifiedByAdminId).toBe('admin1');
+      expect(paymentUpdate.data.verified).toBe(false);
+    });
+  });
+
+  describe('assignDelivery', () => {
+    it('rechaza si el responsable no tiene rol de vendedor', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({ id: 'o1', status: OrderStatus.PAYMENT_VERIFIED });
+      prisma.user.findUnique.mockResolvedValue({ id: 'u1', role: { slug: RoleSlug.ADMIN } });
+      const service = new OrdersService(prisma as never);
+
+      await expect(service.assignDelivery('o1', { deliveryPersonId: 'u1' })).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('rechaza si el pedido no tiene el pago verificado', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({ id: 'o1', status: OrderStatus.PAYMENT_PENDING });
+      const service = new OrdersService(prisma as never);
+
+      await expect(service.assignDelivery('o1', { deliveryPersonId: 'u1' })).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+  });
+});
