@@ -1,18 +1,23 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { BlobServiceClient } from '@azure/storage-blob';
 import { mkdir, writeFile } from 'fs/promises';
 import { join } from 'path';
 
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
-// Almacenamiento de imagenes del catalogo (seccion 9 del SDD): esta es la
-// "alternativa mas simple" que el SDD explicitamente valida para el plazo del
-// proyecto - una carpeta de archivos estaticos servida por el propio backend
-// (ver app.useStaticAssets en main.ts) - en vez de un bucket S3-compatible.
-// IMAGE_STORAGE_PROVIDER=S3_COMPATIBLE queda declarado en .env para cuando el
-// equipo tenga un bucket real, pero no se implementa aqui todavia.
+// Almacenamiento de imagenes del catalogo (seccion 9 del SDD). LOCAL_FILESYSTEM
+// es la "alternativa mas simple" que el SDD explicitamente valida para el
+// plazo del proyecto - una carpeta de archivos estaticos servida por el
+// propio backend (ver app.useStaticAssets en main.ts). AZURE_BLOB sube al
+// contenedor de Azure Blob Storage del equipo (el contenedor debe tener
+// acceso publico de lectura a nivel "Blob" para que las imagenes se puedan
+// mostrar directo en el catalogo). S3_COMPATIBLE queda declarado en .env
+// para cuando el equipo tenga un bucket S3 real, pero no se implementa aqui.
 @Injectable()
 export class ImageStorageService {
+  private blobServiceClient?: BlobServiceClient;
+
   constructor(private readonly configService: ConfigService) {}
 
   private assertValidFile(file: Express.Multer.File) {
@@ -34,19 +39,58 @@ export class ImageStorageService {
     this.assertValidFile(file);
 
     const provider = this.configService.get<string>('IMAGE_STORAGE_PROVIDER');
+    const sanitizedName = file.originalname.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+    const fileName = `${Date.now()}-${sanitizedName}`;
+
+    if (provider === 'AZURE_BLOB') {
+      return this.saveToAzureBlob(productId, fileName, file);
+    }
+
     if (provider !== 'LOCAL_FILESYSTEM') {
       throw new BadRequestException(
         `IMAGE_STORAGE_PROVIDER=${provider} no esta implementado todavia.`,
       );
     }
 
-    const sanitizedName = file.originalname.replace(/[^a-zA-Z0-9.\-_]/g, '_');
-    const fileName = `${Date.now()}-${sanitizedName}`;
     const productDir = join(process.cwd(), 'uploads', 'products', productId);
-
     await mkdir(productDir, { recursive: true });
     await writeFile(join(productDir, fileName), file.buffer);
 
     return `/uploads/products/${productId}/${fileName}`;
+  }
+
+  private getBlobServiceClient(): BlobServiceClient {
+    if (!this.blobServiceClient) {
+      const connectionString = this.configService.get<string>('AZURE_STORAGE_CONNECTION_STRING');
+      if (!connectionString) {
+        throw new BadRequestException(
+          'AZURE_STORAGE_CONNECTION_STRING no esta configurado en el servidor.',
+        );
+      }
+      this.blobServiceClient = BlobServiceClient.fromConnectionString(connectionString);
+    }
+    return this.blobServiceClient;
+  }
+
+  private async saveToAzureBlob(
+    productId: string,
+    fileName: string,
+    file: Express.Multer.File,
+  ): Promise<string> {
+    const containerName = this.configService.get<string>('AZURE_STORAGE_CONTAINER_NAME');
+    if (!containerName) {
+      throw new BadRequestException(
+        'AZURE_STORAGE_CONTAINER_NAME no esta configurado en el servidor.',
+      );
+    }
+
+    const containerClient = this.getBlobServiceClient().getContainerClient(containerName);
+    const blockBlobClient = containerClient.getBlockBlobClient(`products/${productId}/${fileName}`);
+
+    await blockBlobClient.uploadData(file.buffer, {
+      blobHTTPHeaders: { blobContentType: file.mimetype },
+    });
+
+    return blockBlobClient.url;
   }
 }
