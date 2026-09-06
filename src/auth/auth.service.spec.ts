@@ -264,6 +264,7 @@ describe('AuthService', () => {
       expect(mailerService.sendVerificationCode).toHaveBeenCalledWith(
         'nuevo@escuelaing.edu.co',
         expect.stringMatching(/^\d{6}$/),
+        'Nuevo',
       );
       expect(result.email).toBe('nuevo@escuelaing.edu.co');
     });

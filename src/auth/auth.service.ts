@@ -248,7 +248,7 @@ export class AuthService {
       },
     });
 
-    await this.mailerService.sendVerificationCode(user.email, code);
+    await this.mailerService.sendVerificationCode(user.email, code, user.name);
 
     return {
       message: 'Te enviamos un codigo de verificacion a tu correo institucional.',
