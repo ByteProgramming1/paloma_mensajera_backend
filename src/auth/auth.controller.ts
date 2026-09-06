@@ -7,6 +7,8 @@ import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { MicrosoftLoginDto } from './dto/microsoft-login.dto';
 import { CreateTemporaryUserDto } from './dto/create-temporary-user.dto';
+import { RegisterDto } from './dto/register.dto';
+import { VerifyEmailDto } from './dto/verify-email.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -19,15 +21,31 @@ export class AuthController {
     return this.authService.login(dto);
   }
 
-  // POST /auth/register y /auth/verify-email (auto-registro con codigo por
-  // correo) quedan deshabilitados: el acceso institucional se resuelve con
-  // Microsoft SSO (ver loginWithMicrosoft), que da mejor experiencia y ya fue
-  // validado como viable sin depender de TI (app registration con una cuenta
-  // personal + validacion de dominio en AuthService.assertInstitutionalEmail).
-  // AuthService.register/verifyEmail y su schema (emailVerifiedAt,
-  // EmailVerificationCode) se dejan intactos por si se retoma mas adelante.
+  // Auto-registro con verificacion de correo (ver AuthService.register):
+  // vuelve a ser el mecanismo principal de acceso institucional. Se intento
+  // Microsoft SSO como alternativa, pero requiere un directorio de Entra ID
+  // propio para registrar la app (Microsoft ya no permite crear apps sin uno)
+  // y eso implicaba tarjeta de credito/debito - descartado por decision del
+  // equipo. loginWithMicrosoft se deja disponible por si mas adelante alguien
+  // consigue un directorio sin tarjeta (M365 Dev Program, GitHub Student Pack).
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @Post('register')
+  register(@Body() dto: RegisterDto) {
+    return this.authService.register(dto);
+  }
 
-  // Login con la cuenta institucional de Microsoft (Entra ID) - ver AuthService.loginWithMicrosoft.
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @Post('verify-email')
+  verifyEmail(@Body() dto: VerifyEmailDto) {
+    return this.authService.verifyEmail(dto);
+  }
+
+  // Login con la cuenta institucional de Microsoft (Entra ID) - ver
+  // AuthService.loginWithMicrosoft. Responde 503 mientras AZURE_AD_TENANT_ID/
+  // AZURE_AD_CLIENT_ID no esten configurados (ver seccion correspondiente del
+  // README) - no es la via principal por ahora, ver comentario de register().
   @Public()
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   @Post('microsoft')
