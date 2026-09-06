@@ -15,7 +15,15 @@ El rol `verifier` ya no existe (el SDD vigente lo elimina por completo): la revi
 
 ## Imagenes del catalogo
 
-`POST /products/:id/image` (rol `admin`, `multipart/form-data`, campo `file`) sube una imagen (JPEG/PNG/WebP, hasta `IMAGE_MAX_SIZE_MB`) y actualiza `Product.imageUrl`. Por defecto (`IMAGE_STORAGE_PROVIDER=LOCAL_FILESYSTEM`) se guarda en `uploads/products/<id>/` y se sirve como archivo estatico en `/uploads/...` - no requiere configurar nada mas. `IMAGE_STORAGE_PROVIDER=S3_COMPATIBLE` queda declarado en `.env` para cuando el equipo tenga un bucket real, pero todavia no esta implementado.
+`POST /products/:id/image` (rol `admin`, `multipart/form-data`, campo `file`) sube una imagen (JPEG/PNG/WebP, hasta `IMAGE_MAX_SIZE_MB`) y actualiza `Product.imageUrl`. Hay dos providers implementados, elegidos con `IMAGE_STORAGE_PROVIDER`:
+
+- **`LOCAL_FILESYSTEM`** (default) — se guarda en `uploads/products/<id>/` y se sirve como archivo estatico en `/uploads/...`. No requiere configurar nada mas.
+- **`AZURE_BLOB`** — sube al contenedor de [Azure Blob Storage](https://portal.azure.com) indicado y devuelve la URL publica del blob. Requiere:
+  - `AZURE_STORAGE_CONNECTION_STRING`: en Azure Portal → tu Storage Account → **Security + networking → Access keys** → copia el campo "Connection string" de cualquiera de las dos keys.
+  - `AZURE_STORAGE_CONTAINER_NAME`: el nombre del contenedor donde se guardan las imagenes (creas uno en **Data storage → Containers** si no existe).
+  - El contenedor debe tener **acceso publico de lectura a nivel "Blob"** (Container → Change access level → "Blob (anonymous read access for blobs only)"), porque las imagenes se sirven directo con la URL del blob, sin pasar por el backend.
+
+`IMAGE_STORAGE_PROVIDER=S3_COMPATIBLE` queda declarado en `.env` para un bucket S3 real, pero todavia no esta implementado.
 
 ## Requisitos
 
