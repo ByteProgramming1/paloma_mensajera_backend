@@ -62,7 +62,7 @@ El acceso institucional se controla sin depender de Microsoft/Azure AD: **cualqu
 2. `POST /auth/verify-email` con `{ "email", "code" }`. Si el codigo es correcto y no ha expirado, la cuenta queda verificada (`emailVerifiedAt`) y la respuesta ya incluye la sesion (mismo formato que `POST /auth/login`).
 3. `POST /auth/login` rechaza con `401` a las cuentas con password que aun no verificaron su correo. Las cuentas creadas por un administrador (`POST /auth/temporary-user`) quedan verificadas de inmediato, porque ya hay alguien que dio fe de esa identidad.
 
-Requiere las variables `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER` y `SMTP_PASSWORD` en `.env` (puede ser una cuenta de Gmail/Outlook con una "contrasena de aplicacion", o cualquier proveedor SMTP). Sin `SMTP_HOST` configurado, `POST /auth/register` responde `503` en vez de fallar silenciosamente.
+Requiere las variables `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM` y, si el proveedor lo exige, `SMTP_USER`/`SMTP_PASSWORD` en `.env`. En Docker Compose, si `SMTP_HOST` está vacío usa Mailpit (`mailpit:1025`) y la bandeja web queda disponible en `http://localhost:8025`; si defines `SMTP_HOST=smtp.gmail.com`, Compose respeta la configuración de Gmail. Para Gmail puedes usar una contraseña de aplicación de 16 caracteres o OAuth2 con `GMAIL`, `ID_CLIENTE`, `SECRETO_CLIENTE` y `GOOGLE_REFRESH_TOKEN`. El client ID y client secret por sí solos no permiten enviar correo. Sin SMTP ni refresh token configurados, `POST /auth/register` responde `503` en vez de fallar silenciosamente.
 
 ## Inicio de sesion con Microsoft Entra ID (opcional, no activo por ahora)
 
@@ -94,7 +94,7 @@ La API queda disponible en `http://localhost:3000` (ver `PORT` en `.env`). `GET 
 docker compose up --build
 ```
 
-La API queda disponible en `http://localhost:3000` (`HOST_PORT` en `.env`). Las credenciales de Postgres se configuran con `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB` en `.env`. Para detener los contenedores:
+La API queda disponible en el puerto definido por `HOST_PORT` (en el entorno actual, `http://localhost:3001`). Mailpit queda en `http://localhost:8025`. Las credenciales de Postgres se configuran con `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB` en `.env`. Para detener los contenedores:
 
 ```bash
 docker compose down

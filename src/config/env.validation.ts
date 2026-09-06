@@ -24,6 +24,11 @@ export const envValidationSchema = Joi.object({
   SMTP_PORT: Joi.number().optional(),
   SMTP_USER: Joi.string().allow('').optional(),
   SMTP_PASSWORD: Joi.string().allow('').optional(),
+  SMTP_FROM: Joi.string().allow('').optional(),
+  GMAIL: Joi.string().email().allow('').optional(),
+  ID_CLIENTE: Joi.string().allow('').optional(),
+  SECRETO_CLIENTE: Joi.string().allow('').optional(),
+  GOOGLE_REFRESH_TOKEN: Joi.string().allow('').optional(),
   // Uno o varios dominios institucionales separados por coma, ej.
   // "escuelaing.edu.co,mail.escuelaing.edu.co" (profesores vs. estudiantes).
   INSTITUTIONAL_EMAIL_DOMAIN: Joi.string().required(),
