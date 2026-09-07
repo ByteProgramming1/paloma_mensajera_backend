@@ -7,6 +7,33 @@ import { ToggleUserStatusDto } from './dto/toggle-user-status.dto';
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
+  // Listado de staff para las pantallas de gestion de roles/turnos y el
+  // selector de "asignar vendedor a esta entrega" (seccion 6/7 del SDD). Sin
+  // filtro explicito, excluye 'comprador': este endpoint es para gestionar
+  // staff, no para exponer la lista de compradores.
+  async findAll(roleFilter?: string) {
+    const roleSlugs = roleFilter
+      ? roleFilter
+          .split(',')
+          .map((slug) => slug.trim())
+          .filter(Boolean)
+      : undefined;
+
+    return this.prisma.user.findMany({
+      where: roleSlugs ? { role: { slug: { in: roleSlugs } } } : { role: { slug: { not: 'comprador' } } },
+      orderBy: { name: 'asc' },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        isActive: true,
+        expiresAt: true,
+        createdAt: true,
+        role: { select: { slug: true, name: true } },
+      },
+    });
+  }
+
   // Reasigna el rol vigente de un usuario sin crear una cuenta nueva, para
   // acomodar la rotacion de turnos del equipo (seccion 6 del SDD).
   async reassignRole(adminId: string, userId: string, dto: ReassignRoleDto) {

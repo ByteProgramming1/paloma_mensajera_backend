@@ -1,9 +1,10 @@
-import { Body, Controller, Param, Patch } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Query } from '@nestjs/common';
 import { RequirePermissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/enums/permissions';
 import { AuthenticatedUser } from '../common/interfaces/authenticated-user.interface';
 import { UsersService } from './users.service';
+import { FindUsersQueryDto } from './dto/find-users.query.dto';
 import { ReassignRoleDto } from './dto/reassign-role.dto';
 import { ToggleUserStatusDto } from './dto/toggle-user-status.dto';
 
@@ -11,6 +12,11 @@ import { ToggleUserStatusDto } from './dto/toggle-user-status.dto';
 @RequirePermissions(Permissions.USERS_MANAGE_ROLES)
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
+
+  @Get()
+  findAll(@Query() query: FindUsersQueryDto) {
+    return this.usersService.findAll(query.role);
+  }
 
   @Patch(':id/role')
   reassignRole(
