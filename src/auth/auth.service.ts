@@ -9,6 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { randomInt } from 'crypto';
+import { Prisma } from '../../prisma/postgresql/generated';
 import { PrismaService } from '../prisma/prisma.service';
 import { PasswordService } from './password.service';
 import { MicrosoftAuthService } from './microsoft/microsoft-auth.service';
@@ -56,6 +57,24 @@ export class AuthService {
       throw new ForbiddenException(
         `Solo se permiten correos institucionales de: ${domains.join(', ')}.`,
       );
+    }
+  }
+
+  // Ambos callers ya hicieron su propio chequeo previo de existencia, pero
+  // ese chequeo no es atomico con el create() (TOCTOU): dos requests
+  // concurrentes para el mismo correo (dos altas de temporary-user, o dos
+  // auto-registros del mismo correo nuevo) pueden pasar la validacion previa
+  // y competir por el mismo email en la BD. Sin este catch, la segunda
+  // llegaba a fallar con un 500 crudo (PrismaClientKnownRequestError P2002)
+  // en vez de un error claro.
+  private async createUserOrThrowConflict(data: Prisma.UserUncheckedCreateInput) {
+    try {
+      return await this.prisma.user.create({ data });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('Ya existe una cuenta con este correo.');
+      }
+      throw error;
     }
   }
 
@@ -181,15 +200,13 @@ export class AuthService {
 
     // Un admin ya da fe de la identidad de esta persona, asi que la cuenta
     // queda verificada desde el inicio (no pasa por el flujo de register()).
-    const user = await this.prisma.user.create({
-      data: {
-        email: dto.email,
-        name: dto.name,
-        password: passwordHash,
-        roleId: role.id,
-        expiresAt: new Date(dto.expiresAt),
-        emailVerifiedAt: new Date(),
-      },
+    const user = await this.createUserOrThrowConflict({
+      email: dto.email,
+      name: dto.name,
+      password: passwordHash,
+      roleId: role.id,
+      expiresAt: new Date(dto.expiresAt),
+      emailVerifiedAt: new Date(),
     });
 
     return {
@@ -229,13 +246,11 @@ export class AuthService {
           where: { id: existing.id },
           data: { name: dto.name, password: passwordHash },
         })
-      : await this.prisma.user.create({
-          data: {
-            email: dto.email,
-            name: dto.name,
-            password: passwordHash,
-            roleId: compradorRole.id,
-          },
+      : await this.createUserOrThrowConflict({
+          email: dto.email,
+          name: dto.name,
+          password: passwordHash,
+          roleId: compradorRole.id,
         });
 
     const code = randomInt(0, 1_000_000).toString().padStart(6, '0');

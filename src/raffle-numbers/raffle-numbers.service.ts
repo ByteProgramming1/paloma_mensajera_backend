@@ -80,6 +80,32 @@ export class RaffleNumbersService {
     };
   }
 
+  // El Administrador define el total de numeros de rifa desde la app, antes
+  // de abrir las ventas (en vez de solo por RAFFLE_NUMBER_COUNT en el seed).
+  // Idempotente: si count ya esta cubierto no crea nada; si es mayor, crea
+  // solo los numeros faltantes en el rango contiguo (mismo criterio que
+  // prisma/seed.ts). Nunca reduce el total ni toca numeros existentes -
+  // podrian ya estar asignados a un pedido o incluso ganadores de un sorteo.
+  async configure(count: number) {
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.raffleNumber.count();
+      if (count < existing) {
+        throw new BadRequestException(
+          `Ya existen ${existing} numeros de rifa; no se puede configurar un total menor (${count}) sin eliminar numeros existentes.`,
+        );
+      }
+      if (count === existing) {
+        return { totalNumbers: existing, numbersCreated: 0 };
+      }
+
+      const numbersToCreate = Array.from({ length: count - existing }, (_, index) => ({
+        number: existing + index + 1,
+      }));
+      await tx.raffleNumber.createMany({ data: numbersToCreate });
+      return { totalNumbers: count, numbersCreated: numbersToCreate.length };
+    });
+  }
+
   drawHistory() {
     return this.prisma.drawRound.findMany({
       orderBy: { drawnAt: 'desc' },

@@ -5,6 +5,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { Prisma } from '../../prisma/postgresql/generated';
 import { AuthService } from './auth.service';
 
 // jwks-rsa (usado por MicrosoftAuthService) depende de un paquete ESM-only
@@ -193,6 +194,32 @@ describe('AuthService', () => {
       expect(passwordService.hash).not.toHaveBeenCalled();
       expect(prisma.user.create.mock.calls[0][0].data.password).toBeNull();
     });
+
+    // Regresion: dos altas para el mismo correo (o una carrera entre dos
+    // requests) hacian que la segunda propagara el PrismaClientKnownRequestError
+    // P2002 crudo como un 500, en vez de un error claro para el cliente.
+    it('devuelve 409 en vez de un 500 crudo si el correo ya existe', async () => {
+      const { service, prisma } = buildDeps();
+      prisma.role.findUnique.mockResolvedValue({ id: 'role1', slug: 'seller' });
+      prisma.user.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError(
+          'Unique constraint failed on the fields: (`email`)',
+          {
+            code: 'P2002',
+            clientVersion: '5.22.0',
+          },
+        ),
+      );
+
+      await expect(
+        service.createTemporaryUser({
+          email: 'repetido@escuelaing.edu.co',
+          name: 'Repetido',
+          roleSlug: 'seller',
+          expiresAt: new Date().toISOString(),
+        } as never),
+      ).rejects.toThrow(ConflictException);
+    });
   });
 
   describe('register', () => {
@@ -295,6 +322,33 @@ describe('AuthService', () => {
         expect.objectContaining({ where: { id: 'u1' } }),
       );
       expect(mailerService.sendVerificationCode).toHaveBeenCalled();
+    });
+
+    // Regresion: el chequeo previo de `existing` no es atomico con el
+    // create() - dos auto-registros concurrentes del mismo correo nuevo
+    // pueden competir por el mismo email en la BD.
+    it('devuelve 409 en vez de un 500 crudo si el correo ya existe (carrera con el chequeo previo)', async () => {
+      const { service, prisma, passwordService } = buildDeps();
+      prisma.user.findUnique.mockResolvedValue(null);
+      prisma.role.findUnique.mockResolvedValue({ id: 'role-comprador', slug: 'comprador' });
+      passwordService.hash.mockResolvedValue('hashed');
+      prisma.user.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError(
+          'Unique constraint failed on the fields: (`email`)',
+          {
+            code: 'P2002',
+            clientVersion: '5.22.0',
+          },
+        ),
+      );
+
+      await expect(
+        service.register({
+          email: 'carrera@escuelaing.edu.co',
+          name: 'Carrera',
+          password: 'password123',
+        }),
+      ).rejects.toThrow(ConflictException);
     });
   });
 
