@@ -121,6 +121,8 @@ Para eliminar tambien la base de datos persistida, usa `docker compose down -v`.
 | Script | Descripcion |
 | :--- | :--- |
 | `npm run start:dev` | Servidor en modo desarrollo (watch) |
+| `npm start` | Produccion: aplica migraciones, corre el seed y arranca `dist/main.js` (lo usa Azure App Service por defecto) |
+| `npm run start:prod` | Solo arranca `dist/main.js`, sin migraciones ni seed |
 | `npm run build` | Compila a `dist/` |
 | `npm run lint` | ESLint + Prettier (con `--fix`) |
 | `npm run lint:check` | ESLint sin `--fix` (el que corre en CI) |
