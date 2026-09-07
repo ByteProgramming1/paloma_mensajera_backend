@@ -7,6 +7,8 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailerService } from '../mailer/mailer.service';
+import { Permissions } from '../common/enums/permissions';
+import { AuthenticatedUser } from '../common/interfaces/authenticated-user.interface';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { VerifyMessageDto } from './dto/verify-message.dto';
 import { SelectRaffleNumberDto } from './dto/select-raffle-number.dto';
@@ -340,25 +342,65 @@ export class OrdersService {
 
   // Cola de dedicatorias pendientes para el Vendedor - puede buscar por el
   // nombre del comprador para ubicar un pedido puntual (seccion 3.2 del SDD).
+  // El filtro NO se puede resolver en el WHERE de Prisma: buyerFullName esta
+  // cifrado con IV aleatorio (ver DatabaseEncryptionService), asi que un
+  // `contains` en la BD compara contra el texto cifrado y nunca coincide con
+  // una subcadena real del nombre en claro. Se trae la cola completa (ya
+  // descifrada por la extension de Prisma) y se filtra en memoria.
   async findMessageQueue(search?: string) {
     const orders = await this.prisma.order.findMany({
       ...ORDER_WITH_RELATIONS,
-      where: {
-        status: OrderStatus.MESSAGE_PENDING_REVIEW,
-        ...(search ? { deliveryDetail: { buyerFullName: { contains: search } } } : {}),
-      },
+      where: { status: OrderStatus.MESSAGE_PENDING_REVIEW },
       orderBy: { createdAt: 'asc' },
     });
-    return orders.map(serializeOrderMessageView);
+    const matching = search
+      ? orders.filter((order) =>
+          order.deliveryDetail?.buyerFullName?.toLowerCase().includes(search.toLowerCase()),
+        )
+      : orders;
+    return matching.map(serializeOrderMessageView);
   }
 
+  // Mismo motivo que findMessageQueue: recipientFullName tambien esta
+  // cifrado, el filtro se aplica en memoria tras el fetch.
   async findByRecipientName(recipientName: string) {
     const orders = await this.prisma.order.findMany({
       ...ORDER_WITH_RELATIONS,
-      where: { deliveryDetail: { recipientFullName: { contains: recipientName } } },
       orderBy: { createdAt: 'desc' },
     });
-    return orders.map(serializeOrderSafe);
+    const needle = recipientName.toLowerCase();
+    const matching = orders.filter((order) =>
+      order.deliveryDetail?.recipientFullName?.toLowerCase().includes(needle),
+    );
+    return matching.map(serializeOrderSafe);
+  }
+
+  // Pedido individual (GET /orders/:id). Admin/Vendedor ven la misma vista
+  // que en el listado (seccion 6 del SDD); el comprador solo puede ver el
+  // suyo - el filtro por buyerEmail no se puede hacer en el WHERE de Prisma
+  // porque ese campo esta cifrado con IV aleatorio (ver DatabaseEncryptionService),
+  // asi que la comprobacion de dueno se hace en memoria tras descifrar.
+  async findOneForUser(orderId: string, actingUser: AuthenticatedUser) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      ...ORDER_WITH_RELATIONS,
+    });
+    if (!order) {
+      throw new NotFoundException(`Pedido '${orderId}' no encontrado.`);
+    }
+
+    if (actingUser.permissions.includes(Permissions.ORDERS_READ_ALL)) {
+      return serializeOrderFull(order);
+    }
+    if (actingUser.permissions.includes(Permissions.ORDERS_READ_PUBLIC_SAFE)) {
+      return serializeOrderSafe(order);
+    }
+
+    const buyerEmail = order.deliveryDetail?.buyerEmail?.toLowerCase();
+    if (!buyerEmail || buyerEmail !== actingUser.email.toLowerCase()) {
+      throw new ForbiddenException('Este pedido no te pertenece.');
+    }
+    return serializeOrderFull(order);
   }
 
   async findMyDeliveries(deliveryPersonId: string) {

@@ -4,6 +4,7 @@ export enum Permissions {
   ORDERS_READ_ALL = 'orders:read_all',
   ORDERS_READ_PAYMENT_INFO = 'orders:read_payment_info',
   ORDERS_READ_PUBLIC_SAFE = 'orders:read_public_safe',
+  ORDERS_READ_OWN = 'orders:read_own',
   ORDERS_VERIFY_PAYMENT = 'orders:verify_payment',
   ORDERS_ASSIGN_DELIVERY = 'orders:assign_delivery',
   ORDERS_UPDATE_DELIVERY = 'orders:update_delivery',
@@ -27,6 +28,7 @@ export const PERMISSION_DEFINITIONS: Array<{
   { slug: Permissions.ORDERS_READ_ALL, resource: 'orders', action: 'read_all' },
   { slug: Permissions.ORDERS_READ_PAYMENT_INFO, resource: 'orders', action: 'read_payment_info' },
   { slug: Permissions.ORDERS_READ_PUBLIC_SAFE, resource: 'orders', action: 'read_public_safe' },
+  { slug: Permissions.ORDERS_READ_OWN, resource: 'orders', action: 'read_own' },
   { slug: Permissions.ORDERS_VERIFY_PAYMENT, resource: 'orders', action: 'verify_payment' },
   { slug: Permissions.ORDERS_ASSIGN_DELIVERY, resource: 'orders', action: 'assign_delivery' },
   { slug: Permissions.ORDERS_UPDATE_DELIVERY, resource: 'orders', action: 'update_delivery' },
@@ -71,6 +73,10 @@ export const ROLE_PERMISSION_MATRIX: Record<string, Permissions[]> = {
   ],
   comprador: [
     Permissions.ORDERS_CREATE_PUBLIC,
+    // Le permite volver a consultar su propio pedido (GET /orders/:id) para
+    // ver si la dedicatoria fue aprobada/rechazada o si ya tiene numero de
+    // rifa, incluso despues de cerrar la pestana - ver OrdersService.findOneForUser.
+    Permissions.ORDERS_READ_OWN,
     Permissions.RAFFLE_SELECT_NUMBER,
     Permissions.PRODUCTS_READ_ACTIVE,
   ],
