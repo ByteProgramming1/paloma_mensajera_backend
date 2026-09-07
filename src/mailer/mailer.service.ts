@@ -171,7 +171,8 @@ export class MailerService {
     });
 
     try {
-      await this.getTransporter().sendMail({
+      const transporter = await this.getTransporter();
+      await transporter.sendMail({
         from: this.getFromAddress(),
         to: email,
         subject: 'Recupera tu contraseña - Paloma Mensajera',
