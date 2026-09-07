@@ -8,6 +8,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { RolesModule } from './roles/roles.module';
 import { ProductsModule } from './products/products.module';
+import { AddOnOptionsModule } from './addon-options/addon-options.module';
 import { RaffleNumbersModule } from './raffle-numbers/raffle-numbers.module';
 import { SettingsModule } from './settings/settings.module';
 import { OrdersModule } from './orders/orders.module';
@@ -30,6 +31,7 @@ import { UsersModule } from './users/users.module';
     AuthModule,
     RolesModule,
     ProductsModule,
+    AddOnOptionsModule,
     RaffleNumbersModule,
     SettingsModule,
     OrdersModule,

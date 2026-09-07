@@ -5,6 +5,7 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JwtPayload } from '../jwt-payload.interface';
 import { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface';
+import { RoleSlug } from '../../common/enums/domain.enums';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -39,10 +40,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('La cuenta temporal ha expirado.');
     }
 
-    if (user.roleExpiresAt && user.roleExpiresAt.getTime() <= Date.now() && user.rolePreviousId) {
+    // Al vencer un cambio temporal de rol, siempre vuelve a "comprador" (no a
+    // rolePreviousId): asi queda a prueba de cadenas de reasignacion o de un
+    // rolePreviousId nulo, sin importar desde que rol se hizo el cambio.
+    if (user.roleExpiresAt && user.roleExpiresAt.getTime() <= Date.now()) {
+      const buyerRole = await this.prisma.role.findUniqueOrThrow({
+        where: { slug: RoleSlug.BUYER },
+      });
       await this.prisma.user.update({
         where: { id: user.id },
-        data: { roleId: user.rolePreviousId, rolePreviousId: null, roleExpiresAt: null },
+        data: { roleId: buyerRole.id, rolePreviousId: null, roleExpiresAt: null },
       });
       return this.validate(payload);
     }

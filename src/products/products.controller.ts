@@ -14,6 +14,7 @@ import { Permissions } from '../common/enums/permissions';
 import { ProductsService } from './products.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+import { CreateAddOnGroupDto } from './dto/create-addon-group.dto';
 
 @Controller('products')
 export class ProductsController {
@@ -45,5 +46,13 @@ export class ProductsController {
   @UseInterceptors(FileInterceptor('file'))
   uploadImage(@Param('id') id: string, @UploadedFile() file?: Express.Multer.File) {
     return this.productsService.updateImage(id, file);
+  }
+
+  // Crea un grupo de acompañantes para el producto (ej. "Elige tu carta").
+  // Las opciones del grupo se crean por separado, ver POST /add-on-options.
+  @RequirePermissions(Permissions.PRODUCTS_MANAGE)
+  @Post(':id/addon-groups')
+  createAddOnGroup(@Param('id') id: string, @Body() dto: CreateAddOnGroupDto) {
+    return this.productsService.createAddOnGroup(id, dto);
   }
 }
