@@ -7,10 +7,8 @@ import { ToggleUserStatusDto } from './dto/toggle-user-status.dto';
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  // Listado de staff para las pantallas de gestion de roles/turnos y el
-  // selector de "asignar vendedor a esta entrega" (seccion 6/7 del SDD). Sin
-  // filtro explicito, excluye 'comprador': este endpoint es para gestionar
-  // staff, no para exponer la lista de compradores.
+  // Listado administrativo de todas las cuentas. El filtro opcional permite
+  // que otros flujos, como el selector de vendedores, soliciten solo un rol.
   async findAll(roleFilter?: string) {
     const roleSlugs = roleFilter
       ? roleFilter
@@ -20,9 +18,7 @@ export class UsersService {
       : undefined;
 
     return this.prisma.user.findMany({
-      where: roleSlugs
-        ? { role: { slug: { in: roleSlugs } } }
-        : { role: { slug: { not: 'comprador' } } },
+      where: roleSlugs ? { role: { slug: { in: roleSlugs } } } : undefined,
       orderBy: { name: 'asc' },
       select: {
         id: true,
@@ -30,6 +26,7 @@ export class UsersService {
         name: true,
         isActive: true,
         expiresAt: true,
+        roleExpiresAt: true,
         createdAt: true,
         role: { select: { slug: true, name: true } },
       },
@@ -39,7 +36,11 @@ export class UsersService {
   // Reasigna el rol vigente de un usuario sin crear una cuenta nueva, para
   // acomodar la rotacion de turnos del equipo (seccion 6 del SDD).
   async reassignRole(adminId: string, userId: string, dto: ReassignRoleDto) {
-    await this.findUserOrThrow(userId);
+    const user = await this.findUserOrThrow(userId);
+    const roleExpiresAt = new Date(dto.roleExpiresAt);
+    if (roleExpiresAt <= new Date()) {
+      throw new BadRequestException('La fecha de vencimiento del rol debe ser futura.');
+    }
 
     const role = await this.prisma.role.findUnique({ where: { slug: dto.newRole } });
     if (!role) {
@@ -48,12 +49,19 @@ export class UsersService {
 
     return this.prisma.user.update({
       where: { id: userId },
-      data: { roleId: role.id, roleAssignedByAdminId: adminId, roleAssignedAt: new Date() },
+      data: {
+        roleId: role.id,
+        rolePreviousId: user.roleId,
+        roleExpiresAt,
+        roleAssignedByAdminId: adminId,
+        roleAssignedAt: new Date(),
+      },
       select: {
         id: true,
         email: true,
         name: true,
         roleAssignedAt: true,
+        roleExpiresAt: true,
         role: { select: { slug: true } },
       },
     });
