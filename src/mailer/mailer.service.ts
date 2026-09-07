@@ -41,6 +41,14 @@ export class MailerService {
         this.hasOAuthConfig()
           ? {
               service: 'gmail',
+              // Timeouts explicitos (igual que la rama SMTP de abajo): sin
+              // esto, nodemailer usa su default de 2 minutos por intento de
+              // conexion, y con las 2 direcciones que resuelve (IPv4 + IPv6,
+              // ver shared/resolveHostname) un fallo puede tardar hasta ~4
+              // minutos en reportarse en vez de fallar rapido con un 503.
+              connectionTimeout: 10_000,
+              greetingTimeout: 10_000,
+              socketTimeout: 15_000,
               auth: {
                 type: 'OAuth2',
                 user: this.getSmtpUser(),
