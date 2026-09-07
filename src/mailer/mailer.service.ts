@@ -15,37 +15,62 @@ export class MailerService {
 
   constructor(private readonly configService: ConfigService) {}
 
+  // Debe reflejar exactamente las mismas condiciones que getTransporter() usa
+  // para elegir una rama valida: si isConfigured() da true pero falta algun
+  // dato (p.ej. ID_CLIENTE/SECRETO_CLIENTE/GOOGLE_REFRESH_TOKEN sin
+  // SMTP_USER/GMAIL), getTransporter() cae al host SMTP sin SMTP_HOST
+  // definido y nodemailer intenta conectarse a localhost:587 en vez de
+  // fallar con un 503 explicito.
   private isConfigured(): boolean {
+    return Boolean(this.configService.get<string>('SMTP_HOST') || this.hasOAuthConfig());
+  }
+
+  private hasOAuthConfig(): boolean {
     return Boolean(
-      this.configService.get<string>('SMTP_HOST') ||
-      (this.configService.get<string>('ID_CLIENTE') &&
+      this.getSmtpUser() &&
+        this.configService.get<string>('ID_CLIENTE') &&
         this.configService.get<string>('SECRETO_CLIENTE') &&
-        this.configService.get<string>('GOOGLE_REFRESH_TOKEN')),
+        this.configService.get<string>('GOOGLE_REFRESH_TOKEN'),
     );
   }
 
   private getTransporter(): nodemailer.Transporter {
     if (!this.transporter) {
-      const user = this.getSmtpUser();
-      const pass = this.configService.get<string>('SMTP_PASSWORD');
-      const clientId = this.configService.get<string>('ID_CLIENTE');
-      const clientSecret = this.configService.get<string>('SECRETO_CLIENTE');
-      const refreshToken = this.configService.get<string>('GOOGLE_REFRESH_TOKEN');
+      const host = this.configService.get<string>('SMTP_HOST');
       const transportOptions: Parameters<typeof nodemailer.createTransport>[0] =
-        user && clientId && clientSecret && refreshToken
+        this.hasOAuthConfig()
           ? {
               service: 'gmail',
-              auth: { type: 'OAuth2', user, clientId, clientSecret, refreshToken },
+              auth: {
+                type: 'OAuth2',
+                user: this.getSmtpUser(),
+                clientId: this.configService.get<string>('ID_CLIENTE'),
+                clientSecret: this.configService.get<string>('SECRETO_CLIENTE'),
+                refreshToken: this.configService.get<string>('GOOGLE_REFRESH_TOKEN'),
+              },
             }
-          : {
-              host: this.configService.get<string>('SMTP_HOST'),
-              port: this.configService.get<number>('SMTP_PORT'),
-              secure: this.configService.get<number>('SMTP_PORT') === 465,
-              connectionTimeout: 10_000,
-              greetingTimeout: 10_000,
-              socketTimeout: 15_000,
-              ...(user && pass ? { auth: { user, pass } } : {}),
-            };
+          : (() => {
+              if (!host) {
+                // No debe ocurrir: isConfigured() ya descarta este caso antes de
+                // llegar aqui. Se lanza en vez de dejar que nodemailer intente
+                // localhost:587 por defecto.
+                throw new ServiceUnavailableException(
+                  'El envio de correos no esta configurado en el servidor (variables SMTP_*).',
+                );
+              }
+              const port = this.configService.get<number>('SMTP_PORT');
+              const user = this.getSmtpUser();
+              const pass = this.configService.get<string>('SMTP_PASSWORD');
+              return {
+                host,
+                port,
+                secure: port === 465,
+                connectionTimeout: 10_000,
+                greetingTimeout: 10_000,
+                socketTimeout: 15_000,
+                ...(user && pass ? { auth: { user, pass } } : {}),
+              };
+            })();
       this.transporter = nodemailer.createTransport(transportOptions);
     }
     return this.transporter;
