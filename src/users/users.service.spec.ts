@@ -16,7 +16,10 @@ describe('UsersService', () => {
       const service = new UsersService(prisma as never);
 
       await expect(
-        service.reassignRole('admin1', 'nadie', { newRole: 'seller', roleExpiresAt: '2099-01-01T00:00:00.000Z' } as never),
+        service.reassignRole('admin1', 'nadie', {
+          newRole: 'seller',
+          roleExpiresAt: '2099-01-01T00:00:00.000Z',
+        } as never),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -27,7 +30,10 @@ describe('UsersService', () => {
       const service = new UsersService(prisma as never);
 
       await expect(
-        service.reassignRole('admin1', 'u1', { newRole: 'inexistente', roleExpiresAt: '2099-01-01T00:00:00.000Z' } as never),
+        service.reassignRole('admin1', 'u1', {
+          newRole: 'inexistente',
+          roleExpiresAt: '2099-01-01T00:00:00.000Z',
+        } as never),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -38,7 +44,10 @@ describe('UsersService', () => {
       prisma.user.update.mockResolvedValue({ id: 'u1', role: { slug: 'seller' } });
       const service = new UsersService(prisma as never);
 
-      await service.reassignRole('admin1', 'u1', { newRole: 'seller', roleExpiresAt: '2099-01-01T00:00:00.000Z' } as never);
+      await service.reassignRole('admin1', 'u1', {
+        newRole: 'seller',
+        roleExpiresAt: '2099-01-01T00:00:00.000Z',
+      } as never);
 
       const updateArgs = prisma.user.update.mock.calls[0][0];
       expect(updateArgs.data.roleId).toBe('role-seller');
@@ -53,7 +62,10 @@ describe('UsersService', () => {
       const service = new UsersService(prisma as never);
 
       await expect(
-        service.reassignRole('admin1', 'u1', { newRole: 'seller', roleExpiresAt: '2020-01-01T00:00:00.000Z' } as never),
+        service.reassignRole('admin1', 'u1', {
+          newRole: 'seller',
+          roleExpiresAt: '2020-01-01T00:00:00.000Z',
+        } as never),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.role.findUnique).not.toHaveBeenCalled();
     });
