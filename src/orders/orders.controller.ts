@@ -19,7 +19,6 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { VerifyMessageDto } from './dto/verify-message.dto';
 import { SelectRaffleNumberDto } from './dto/select-raffle-number.dto';
 import { VerifyPaymentDto } from './dto/verify-payment.dto';
-import { AssignDeliveryDto } from './dto/assign-delivery.dto';
 import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
 import { FindOrdersQueryDto } from './dto/find-orders.query.dto';
 
@@ -40,10 +39,14 @@ export class OrdersController {
     return this.ordersService.createPublicOrder(dto);
   }
 
+  // A pesar del nombre (se conserva la ruta para no romper el frontend), ya
+  // no filtra por vendedor asignado: cualquier cuenta con este permiso ve
+  // TODAS las entregas pendientes, sin asignacion previa del Administrador
+  // (ver OrdersService.findMyDeliveries).
   @RequirePermissions(Permissions.ORDERS_READ_PUBLIC_SAFE)
   @Get('my-deliveries')
-  findMyDeliveries(@CurrentUser() user: AuthenticatedUser) {
-    return this.ordersService.findMyDeliveries(user.userId);
+  findMyDeliveries() {
+    return this.ordersService.findMyDeliveries();
   }
 
   @Get()
@@ -110,16 +113,18 @@ export class OrdersController {
     return this.ordersService.verifyPayment(id, user, dto);
   }
 
-  @RequirePermissions(Permissions.ORDERS_ASSIGN_DELIVERY)
-  @Patch(':id/assign-delivery')
-  assignDelivery(@Param('id') id: string, @Body() dto: AssignDeliveryDto) {
-    return this.ordersService.assignDelivery(id, dto);
-  }
-
+  // Cualquier vendedor puede tomar y marcar cualquier entrega pendiente, sin
+  // asignacion previa del Administrador (ver OrdersService.updateDeliveryStatus):
+  // "tomar" una entrega es simplemente ser quien marca el primer cambio de
+  // estado, no una accion aparte.
   @RequirePermissions(Permissions.ORDERS_UPDATE_DELIVERY)
   @Patch(':id/delivery-status')
-  updateDeliveryStatus(@Param('id') id: string, @Body() dto: UpdateDeliveryStatusDto) {
-    return this.ordersService.updateDeliveryStatus(id, dto);
+  updateDeliveryStatus(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: UpdateDeliveryStatusDto,
+  ) {
+    return this.ordersService.updateDeliveryStatus(id, user.userId, dto);
   }
 
   @RequirePermissions(Permissions.ORDERS_UPDATE_DELIVERY)

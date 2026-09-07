@@ -20,7 +20,7 @@ function buildPrismaMock(overrides: Record<string, unknown> = {}) {
     raffleNumber: { updateMany: jest.fn(), update: jest.fn() },
     paymentTransaction: { create: jest.fn(), update: jest.fn() },
     messageReview: { update: jest.fn() },
-    deliveryAssignment: { create: jest.fn(), update: jest.fn() },
+    deliveryAssignment: { create: jest.fn(), update: jest.fn(), findFirst: jest.fn() },
     deliveryDetail: { findUnique: jest.fn() },
   };
 
@@ -263,56 +263,72 @@ describe('OrdersService', () => {
     });
   });
 
-  describe('assignDelivery', () => {
-    it('rechaza si el responsable no tiene rol de vendedor', async () => {
-      const prisma = buildPrismaMock();
-      prisma.order.findUnique.mockResolvedValue({ id: 'o1', status: OrderStatus.PAYMENT_VERIFIED });
-      prisma.user.findUnique.mockResolvedValue({ id: 'u1', role: { slug: RoleSlug.ADMIN } });
-      const service = new OrdersService(prisma as never, buildMailerMock() as never);
-
-      await expect(service.assignDelivery('o1', { deliveryPersonId: 'u1' })).rejects.toThrow(
-        BadRequestException,
-      );
-    });
-
-    it('rechaza si el pedido no tiene el pago verificado', async () => {
-      const prisma = buildPrismaMock();
-      prisma.order.findUnique.mockResolvedValue({ id: 'o1', status: OrderStatus.PAYMENT_PENDING });
-      const service = new OrdersService(prisma as never, buildMailerMock() as never);
-
-      await expect(service.assignDelivery('o1', { deliveryPersonId: 'u1' })).rejects.toThrow(
-        BadRequestException,
-      );
-    });
-  });
-
   describe('updateDeliveryStatus', () => {
-    it('rechaza si el pedido no tiene un encargado asignado', async () => {
+    it('rechaza si el pedido no esta en un estado listo para entrega', async () => {
       const prisma = buildPrismaMock();
-      prisma.order.findUnique.mockResolvedValue({ id: 'o1' });
-      prisma.deliveryAssignment.findFirst.mockResolvedValue(null);
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'o1',
+        status: OrderStatus.MESSAGE_PENDING_REVIEW,
+      });
       const service = new OrdersService(prisma as never, buildMailerMock() as never);
 
       await expect(
-        service.updateDeliveryStatus('o1', { status: 'DELIVERED', receivedBy: 'Ana' } as never),
+        service.updateDeliveryStatus('o1', 'seller1', {
+          status: 'DELIVERED',
+          receivedBy: 'Ana',
+        } as never),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('exige receivedBy para marcar como entregado', async () => {
       const prisma = buildPrismaMock();
-      prisma.order.findUnique.mockResolvedValue({ id: 'o1' });
-      prisma.deliveryAssignment.findFirst.mockResolvedValue({ id: 'a1' });
+      prisma.order.findUnique.mockResolvedValue({ id: 'o1', status: OrderStatus.IN_ROUTE });
       const service = new OrdersService(prisma as never, buildMailerMock() as never);
 
       await expect(
-        service.updateDeliveryStatus('o1', { status: 'DELIVERED' } as never),
+        service.updateDeliveryStatus('o1', 'seller1', { status: 'DELIVERED' } as never),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    it('crea el registro de asignacion si nadie habia tomado la entrega todavia', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({ id: 'o1', status: OrderStatus.PAYMENT_VERIFIED });
+      prisma.__tx.deliveryAssignment.findFirst.mockResolvedValue(null);
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await service.updateDeliveryStatus('o1', 'seller1', { status: 'IN_ROUTE' } as never);
+
+      expect(prisma.__tx.deliveryAssignment.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ orderId: 'o1', deliveryPersonId: 'seller1' }),
+      });
+      expect(prisma.__tx.deliveryAssignment.update).not.toHaveBeenCalled();
+    });
+
+    it('reasigna a quien marca el estado, sin importar quien tomo la entrega antes', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({ id: 'o1', status: OrderStatus.IN_ROUTE });
+      prisma.__tx.deliveryAssignment.findFirst.mockResolvedValue({
+        id: 'a1',
+        deliveryPersonId: 'seller1',
+      });
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await service.updateDeliveryStatus('o1', 'seller2', {
+        status: 'DELIVERED',
+        receivedBy: 'Ana',
+      } as never);
+
+      expect(prisma.__tx.deliveryAssignment.update).toHaveBeenCalledWith({
+        where: { id: 'a1' },
+        data: expect.objectContaining({ deliveryPersonId: 'seller2' }),
+      });
+      expect(prisma.__tx.deliveryAssignment.create).not.toHaveBeenCalled();
     });
 
     it('al marcar como entregado, envia el correo de confirmacion al comprador', async () => {
       const prisma = buildPrismaMock();
-      prisma.order.findUnique.mockResolvedValue({ id: 'o1' });
-      prisma.deliveryAssignment.findFirst.mockResolvedValue({ id: 'a1' });
+      prisma.order.findUnique.mockResolvedValue({ id: 'o1', status: OrderStatus.IN_ROUTE });
+      prisma.__tx.deliveryAssignment.findFirst.mockResolvedValue({ id: 'a1' });
       prisma.__tx.deliveryAssignment.update.mockResolvedValue({ id: 'a1', status: 'DELIVERED' });
       prisma.__tx.deliveryDetail.findUnique.mockResolvedValue({
         buyerEmail: 'ana@escuelaing.edu.co',
@@ -321,7 +337,7 @@ describe('OrdersService', () => {
       const mailer = buildMailerMock();
       const service = new OrdersService(prisma as never, mailer as never);
 
-      await service.updateDeliveryStatus('o1', {
+      await service.updateDeliveryStatus('o1', 'seller1', {
         status: 'DELIVERED',
         receivedBy: 'Ana',
       } as never);
@@ -334,13 +350,13 @@ describe('OrdersService', () => {
 
     it('no envia correo si el estado no es entregado', async () => {
       const prisma = buildPrismaMock();
-      prisma.order.findUnique.mockResolvedValue({ id: 'o1' });
-      prisma.deliveryAssignment.findFirst.mockResolvedValue({ id: 'a1' });
+      prisma.order.findUnique.mockResolvedValue({ id: 'o1', status: OrderStatus.PAYMENT_VERIFIED });
+      prisma.__tx.deliveryAssignment.findFirst.mockResolvedValue({ id: 'a1' });
       prisma.__tx.deliveryAssignment.update.mockResolvedValue({ id: 'a1', status: 'IN_ROUTE' });
       const mailer = buildMailerMock();
       const service = new OrdersService(prisma as never, mailer as never);
 
-      await service.updateDeliveryStatus('o1', { status: 'UNDELIVERED_RETRY' } as never);
+      await service.updateDeliveryStatus('o1', 'seller1', { status: 'UNDELIVERED_RETRY' } as never);
 
       expect(mailer.sendDeliveryConfirmation).not.toHaveBeenCalled();
       expect(prisma.__tx.deliveryDetail.findUnique).not.toHaveBeenCalled();
