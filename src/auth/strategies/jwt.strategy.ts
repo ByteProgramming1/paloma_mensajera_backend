@@ -39,6 +39,14 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('La cuenta temporal ha expirado.');
     }
 
+    if (user.roleExpiresAt && user.roleExpiresAt.getTime() <= Date.now() && user.rolePreviousId) {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { roleId: user.rolePreviousId, rolePreviousId: null, roleExpiresAt: null },
+      });
+      return this.validate(payload);
+    }
+
     return {
       userId: user.id,
       email: user.email,

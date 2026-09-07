@@ -67,6 +67,7 @@ export enum RoleSlug {
   VERIFIER = 'verifier',
   SELLER = 'seller',
   DELIVERY = 'delivery',
+  BUYER = 'comprador',
 }
 
 // PostgreSQL es el motor principal; SQLite es la alternativa liviana para

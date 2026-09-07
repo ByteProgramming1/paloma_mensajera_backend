@@ -25,6 +25,7 @@ model Role {
   createdAt   DateTime         @default(now())
   permissions RolePermission[]
   users       User[]
+  previousUsers User[]         @relation("PreviousUserRole")
 
   @@map("roles")
 }
@@ -75,6 +76,9 @@ model User {
   roleAssignedByAdminId String?
   roleAssignedBy        User?     @relation("RoleAssignedBy", fields: [roleAssignedByAdminId], references: [id])
   roleAssignedAt        DateTime?
+  roleExpiresAt          DateTime?
+  rolePreviousId         String?
+  rolePrevious           Role?    @relation("PreviousUserRole", fields: [rolePreviousId], references: [id])
   roleReassignments     User[]    @relation("RoleAssignedBy")
 
   verifiedPayments    PaymentTransaction[] @relation("VerifiedBy")
