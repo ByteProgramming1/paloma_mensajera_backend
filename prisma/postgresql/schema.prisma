@@ -69,6 +69,7 @@ model User {
   // la identidad de esa persona.
   emailVerifiedAt        DateTime?
   emailVerificationCodes EmailVerificationCode[]
+  passwordResetTokens    PasswordResetToken[]
 
   // Auditoria de rotacion de turnos (seccion 6 del SDD): quien y cuando se
   // reasigno por ultima vez el rol de este usuario.
@@ -97,6 +98,17 @@ model EmailVerificationCode {
   createdAt DateTime @default(now())
 
   @@map("email_verification_codes")
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("password_reset_tokens")
 }
 
 model Product {
