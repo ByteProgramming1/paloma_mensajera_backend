@@ -14,6 +14,10 @@ export const envValidationSchema = Joi.object({
   }),
   SQLITE_DATABASE_URL: Joi.string().default('file:./dev.db'),
   JWT_SECRET: Joi.string().min(16).required(),
+  // Origenes permitidos para CORS, separados por coma (ej. el dominio de
+  // Vercel del frontend en produccion). Sin definir, acepta cualquier origin
+  // (ver src/main.ts) - asi funciona el desarrollo local sin configurar nada.
+  CORS_ORIGIN: Joi.string().allow('').optional(),
   FIELD_ENCRYPTION_KEY: Joi.string()
     .pattern(/^[0-9a-fA-F]{64}$/)
     .required(),

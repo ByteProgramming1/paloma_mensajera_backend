@@ -15,7 +15,13 @@ async function bootstrap() {
     }),
   );
 
-  app.enableCors();
+  // Sin CORS_ORIGIN (dev local), acepta cualquier origin - ver .env.example.
+  // En produccion, CORS_ORIGIN restringe a los dominios del frontend (ej. el
+  // dominio de Vercel) separados por coma.
+  const corsOrigins = process.env.CORS_ORIGIN?.split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  app.enableCors({ origin: corsOrigins && corsOrigins.length > 0 ? corsOrigins : true });
 
   // Almacenamiento local de imagenes del catalogo (seccion 9 del SDD, modo
   // LOCAL_FILESYSTEM) - ver ImageStorageService.
