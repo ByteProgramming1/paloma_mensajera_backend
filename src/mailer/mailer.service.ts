@@ -14,7 +14,6 @@ const GMAIL_SMTP_HOST = 'smtp.gmail.com';
 @Injectable()
 export class MailerService {
   private readonly logger = new Logger(MailerService.name);
-  private transporter?: nodemailer.Transporter;
 
   constructor(private readonly configService: ConfigService) {}
 
@@ -37,68 +36,75 @@ export class MailerService {
     );
   }
 
+  // No se cachea el transporter (a diferencia de antes): smtp.gmail.com
+  // resuelve a IPs distintas en resoluciones sucesivas (confirmado en vivo:
+  // 108.177.123.108 vs 142.250.0.108 minutos despues) porque Google balancea
+  // DNS entre muchos frontends. Si se cacheara, un envio quedaba pegado de
+  // por vida del proceso a la PRIMERA IP resuelta - si esa IP en particular
+  // tenia mala ruta desde la red de Azure, todos los envios fallaban con
+  // timeout mientras un test manual (que siempre resuelve de nuevo) parecia
+  // funcionar perfecto. Resolver de nuevo en cada envio deja que un intento
+  // fallido tenga otra oportunidad con una IP distinta.
   private async getTransporter(): Promise<nodemailer.Transporter> {
-    if (!this.transporter) {
-      const host = this.configService.get<string>('SMTP_HOST');
-      const transportOptions: Parameters<typeof nodemailer.createTransport>[0] =
-        this.hasOAuthConfig()
-          ? {
-              // nodemailer resuelve smtp.gmail.com con dns.resolve4 + resolve6
-              // y elige una direccion AL AZAR entre ambas (ver
-              // shared/resolveHostname -> formatDNSValue, "random address");
-              // en un contenedor sin ruta IPv6 (como el App Service de
-              // produccion, confirmado con `net.connect({family:6})` ->
-              // EADDRNOTAVAIL) eso hace que ~la mitad de los envios cuelguen.
-              // Se resuelve IPv4 nosotros mismos y se pasa como host literal
-              // para que nodemailer no vuelva a elegir al azar (net.isIP
-              // corta esa logica); `servername` mantiene la verificacion TLS
-              // contra el nombre real en vez de la IP.
-              host: await this.resolveGmailIpv4(),
-              port: 465,
-              secure: true,
-              servername: GMAIL_SMTP_HOST,
-              connectionTimeout: 10_000,
-              greetingTimeout: 10_000,
-              socketTimeout: 15_000,
-              auth: {
-                type: 'OAuth2',
-                user: this.getSmtpUser(),
-                clientId: this.configService.get<string>('ID_CLIENTE'),
-                clientSecret: this.configService.get<string>('SECRETO_CLIENTE'),
-                refreshToken: this.configService.get<string>('GOOGLE_REFRESH_TOKEN'),
-              },
-            }
-          : (() => {
-              if (!host) {
-                // No debe ocurrir: isConfigured() ya descarta este caso antes de
-                // llegar aqui. Se lanza en vez de dejar que nodemailer intente
-                // localhost:587 por defecto.
-                throw new ServiceUnavailableException(
-                  'El envio de correos no esta configurado en el servidor (variables SMTP_*).',
-                );
-              }
-              const port = this.configService.get<number>('SMTP_PORT');
-              const user = this.getSmtpUser();
-              const pass = this.configService.get<string>('SMTP_PASSWORD');
-              return {
-                host,
-                port,
-                secure: port === 465,
-                connectionTimeout: 10_000,
-                greetingTimeout: 10_000,
-                socketTimeout: 15_000,
-                ...(user && pass ? { auth: { user, pass } } : {}),
-              };
-            })();
-      this.transporter = nodemailer.createTransport(transportOptions);
-    }
-    return this.transporter;
+    const host = this.configService.get<string>('SMTP_HOST');
+    const transportOptions: Parameters<typeof nodemailer.createTransport>[0] = this.hasOAuthConfig()
+      ? {
+          // nodemailer resuelve smtp.gmail.com con dns.resolve4 + resolve6
+          // y elige una direccion AL AZAR entre ambas (ver
+          // shared/resolveHostname -> formatDNSValue, "random address");
+          // en un contenedor sin ruta IPv6 (como el App Service de
+          // produccion, confirmado con `net.connect({family:6})` ->
+          // EADDRNOTAVAIL) eso hace que ~la mitad de los envios cuelguen.
+          // Se resuelve IPv4 nosotros mismos y se pasa como host literal
+          // para que nodemailer no vuelva a elegir al azar (net.isIP
+          // corta esa logica); `servername` mantiene la verificacion TLS
+          // contra el nombre real en vez de la IP.
+          host: await this.resolveGmailIpv4(),
+          port: 465,
+          secure: true,
+          servername: GMAIL_SMTP_HOST,
+          connectionTimeout: 10_000,
+          greetingTimeout: 10_000,
+          socketTimeout: 15_000,
+          auth: {
+            type: 'OAuth2',
+            user: this.getSmtpUser(),
+            clientId: this.configService.get<string>('ID_CLIENTE'),
+            clientSecret: this.configService.get<string>('SECRETO_CLIENTE'),
+            refreshToken: this.configService.get<string>('GOOGLE_REFRESH_TOKEN'),
+          },
+        }
+      : (() => {
+          if (!host) {
+            // No debe ocurrir: isConfigured() ya descarta este caso antes de
+            // llegar aqui. Se lanza en vez de dejar que nodemailer intente
+            // localhost:587 por defecto.
+            throw new ServiceUnavailableException(
+              'El envio de correos no esta configurado en el servidor (variables SMTP_*).',
+            );
+          }
+          const port = this.configService.get<number>('SMTP_PORT');
+          const user = this.getSmtpUser();
+          const pass = this.configService.get<string>('SMTP_PASSWORD');
+          return {
+            host,
+            port,
+            secure: port === 465,
+            connectionTimeout: 10_000,
+            greetingTimeout: 10_000,
+            socketTimeout: 15_000,
+            ...(user && pass ? { auth: { user, pass } } : {}),
+          };
+        })();
+    return nodemailer.createTransport(transportOptions);
   }
 
   private async resolveGmailIpv4(): Promise<string> {
     try {
       const addresses = await resolve4(GMAIL_SMTP_HOST);
-      return addresses[0];
+      const address = addresses[Math.floor(Math.random() * addresses.length)];
+      this.logger.debug(`Resolvi ${GMAIL_SMTP_HOST} a ${address} (de ${addresses.length} IPs)`);
+      return address;
     } catch (error) {
       this.logger.error(
         `No se pudo resolver ${GMAIL_SMTP_HOST} por IPv4`,
