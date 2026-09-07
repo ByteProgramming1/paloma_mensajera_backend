@@ -394,14 +394,19 @@ export class OrdersService {
   // Todas las entregas pendientes le salen a todos los vendedores por igual:
   // cualquiera puede tomar y marcar cualquiera, sin que el Administrador la
   // asigne primero a alguien en particular.
-  async findMyDeliveries() {
+  async findMyDeliveries(includeDelivered = false) {
+    const statuses: OrderStatus[] = [
+      OrderStatus.PAYMENT_VERIFIED,
+      OrderStatus.IN_PREPARATION,
+      OrderStatus.IN_ROUTE,
+    ];
+    if (includeDelivered) {
+      statuses.push(OrderStatus.DELIVERED);
+    }
+
     const orders = await this.prisma.order.findMany({
       ...ORDER_WITH_RELATIONS,
-      where: {
-        status: {
-          in: [OrderStatus.PAYMENT_VERIFIED, OrderStatus.IN_PREPARATION, OrderStatus.IN_ROUTE],
-        },
-      },
+      where: { status: { in: statuses } },
       orderBy: { createdAt: 'desc' },
     });
     return orders.map(serializeOrderSafe);
