@@ -346,4 +346,69 @@ describe('OrdersService', () => {
       expect(prisma.__tx.deliveryDetail.findUnique).not.toHaveBeenCalled();
     });
   });
+
+  function buildOrderStub(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 'o1',
+      orderCode: 'PM-0001',
+      status: OrderStatus.MESSAGE_PENDING_REVIEW,
+      totalAmount: 0,
+      salesChannel: SalesChannel.ONLINE,
+      createdAt: new Date(),
+      raffleNumber: null,
+      items: [],
+      deliveryDetail: { buyerFullName: 'Buyer QA', recipientFullName: 'Buyer QA' },
+      ...overrides,
+    };
+  }
+
+  describe('findMessageQueue', () => {
+    // Regresion: buyerFullName esta cifrado en la BD (ver
+    // DatabaseEncryptionService) - el filtro no puede ser un `contains` de
+    // Prisma en el WHERE (compararia contra el texto cifrado), tiene que
+    // aplicarse en memoria sobre el valor ya descifrado por la extension.
+    it('filtra por subcadena del nombre del comprador, sin distinguir mayusculas', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findMany.mockResolvedValue([
+        buildOrderStub({ id: 'o1', deliveryDetail: { buyerFullName: 'Buyer QA' } }),
+        buildOrderStub({ id: 'o2', deliveryDetail: { buyerFullName: 'Otra Persona' } }),
+      ]);
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      const result = await service.findMessageQueue('buyer');
+
+      expect(prisma.order.findMany.mock.calls[0][0].where).toEqual({
+        status: OrderStatus.MESSAGE_PENDING_REVIEW,
+      });
+      expect(result.map((o: { orderId: string }) => o.orderId)).toEqual(['o1']);
+    });
+
+    it('sin search, devuelve toda la cola sin filtrar', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findMany.mockResolvedValue([
+        buildOrderStub({ id: 'o1' }),
+        buildOrderStub({ id: 'o2', deliveryDetail: { buyerFullName: 'Otra Persona' } }),
+      ]);
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      const result = await service.findMessageQueue();
+
+      expect(result).toHaveLength(2);
+    });
+  });
+
+  describe('findByRecipientName', () => {
+    it('filtra por subcadena del nombre del destinatario, sin distinguir mayusculas', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findMany.mockResolvedValue([
+        buildOrderStub({ id: 'o1', deliveryDetail: { recipientFullName: 'Buyer QA' } }),
+        buildOrderStub({ id: 'o2', deliveryDetail: { recipientFullName: 'Otra Persona' } }),
+      ]);
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      const result = await service.findByRecipientName('QA');
+
+      expect(result.map((o: { id: string }) => o.id)).toEqual(['o1']);
+    });
+  });
 });

@@ -70,6 +70,20 @@ export class OrdersController {
     return this.ordersService.findAllSafe();
   }
 
+  // El comprador consulta su propio pedido (orders:read_own) para saber si la
+  // dedicatoria ya fue aprobada/rechazada o si tiene numero de rifa, incluso
+  // despues de cerrar la pestana - ver OrdersService.findOneForUser. Admin y
+  // Vendedor tambien pueden usarla (misma logica de vista que GET /orders).
+  @Get(':id')
+  findOne(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    this.assertAnyPermission(user, [
+      Permissions.ORDERS_READ_OWN,
+      Permissions.ORDERS_READ_ALL,
+      Permissions.ORDERS_READ_PUBLIC_SAFE,
+    ]);
+    return this.ordersService.findOneForUser(id, user);
+  }
+
   @RequirePermissions(Permissions.MESSAGES_VERIFY)
   @Patch(':id/verify-message')
   verifyMessage(
