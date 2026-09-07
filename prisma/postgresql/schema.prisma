@@ -128,38 +128,48 @@ model Product {
   items    OrderItem[]
 
   // Acompañantes opcionales del producto (ej. "Elige tu carta"): un producto
-  // puede tener varios grupos, cada uno con su propio set de opciones - ver
-  // ProductAddOnGroup.
-  addOnGroups ProductAddOnGroup[]
+  // puede tener varios grupos reutilizables asociados - ver ProductAddOnGroup
+  // (tabla de union) y AddOnGroup (el catalogo reutilizable en si).
+  addOnGroupLinks ProductAddOnGroup[]
 
   @@map("products")
 }
 
-// Un grupo de acompañantes asociado a un producto especifico (ej. "Elige tu
-// carta" para un combo). Existe como tabla intermedia (en vez de relacionar
-// AddOnOption directo con Product) para poder nombrar el grupo y permitir que
-// un mismo producto tenga mas de uno en el futuro (ej. "elige carta" + "elige
-// color de moño") sin otra migracion.
-model ProductAddOnGroup {
-  id        String        @id @default(uuid())
-  productId String
-  product   Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
-  name      String
-  options   AddOnOption[]
+// Catalogo reutilizable de grupos de acompañantes (ej. "Cartas"): se crea UNA
+// vez con sus opciones y se asocia a cualquier cantidad de productos via
+// ProductAddOnGroup, en vez de recrear el grupo y sus opciones por cada combo.
+model AddOnGroup {
+  id           String              @id @default(uuid())
+  name         String
+  options      AddOnOption[]
+  productLinks ProductAddOnGroup[]
 
-  @@map("product_addon_groups")
+  @@map("addon_groups")
+}
+
+// Tabla de union producto <-> grupo de acompañantes reutilizable (mismo
+// patron que RolePermission para Role <-> Permission): permite que varios
+// productos compartan el mismo AddOnGroup sin duplicarlo.
+model ProductAddOnGroup {
+  productId String
+  groupId   String
+  product   Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  group     AddOnGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@id([productId, groupId])
+  @@map("product_addon_group_links")
 }
 
 // Catalogo reusable de opciones de un grupo de acompañantes (ej. "Carta rosa",
 // "Carta corazón"). El comprador elige una al agregar el producto al carrito -
 // ver OrderItem.selectedAddOnOptionId.
 model AddOnOption {
-  id         String              @id @default(uuid())
+  id         String      @id @default(uuid())
   groupId    String
-  group      ProductAddOnGroup   @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  group      AddOnGroup  @relation(fields: [groupId], references: [id], onDelete: Cascade)
   name       String
   imageUrl   String?
-  isActive   Boolean             @default(true)
+  isActive   Boolean     @default(true)
   orderItems OrderItem[]
 
   @@map("addon_options")

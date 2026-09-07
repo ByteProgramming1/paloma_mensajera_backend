@@ -9,6 +9,7 @@ import { AuthModule } from './auth/auth.module';
 import { RolesModule } from './roles/roles.module';
 import { ProductsModule } from './products/products.module';
 import { AddOnOptionsModule } from './addon-options/addon-options.module';
+import { AddOnGroupsModule } from './addon-groups/addon-groups.module';
 import { RaffleNumbersModule } from './raffle-numbers/raffle-numbers.module';
 import { SettingsModule } from './settings/settings.module';
 import { OrdersModule } from './orders/orders.module';
@@ -32,6 +33,7 @@ import { UsersModule } from './users/users.module';
     RolesModule,
     ProductsModule,
     AddOnOptionsModule,
+    AddOnGroupsModule,
     RaffleNumbersModule,
     SettingsModule,
     OrdersModule,

@@ -12,7 +12,7 @@ export class AddOnOptionsService {
   ) {}
 
   async create(dto: CreateAddOnOptionDto) {
-    const group = await this.prisma.productAddOnGroup.findUnique({ where: { id: dto.groupId } });
+    const group = await this.prisma.addOnGroup.findUnique({ where: { id: dto.groupId } });
     if (!group) {
       throw new BadRequestException(`El grupo de acompañantes '${dto.groupId}' no existe.`);
     }
