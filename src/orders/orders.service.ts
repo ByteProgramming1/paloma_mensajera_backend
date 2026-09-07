@@ -425,17 +425,21 @@ export class OrdersService {
     }
   }
 
-  // Valida que cada opcion de acompañante elegida realmente pertenezca a un
-  // grupo del producto de esa misma linea del carrito, y este activa - evita
-  // que un item quede con una opcion de otro producto o desactivada.
+  // Valida que cada opcion de acompañante elegida este activa y que su grupo
+  // (reutilizable, ver AddOnGroup) realmente este asociado al producto de esa
+  // misma linea del carrito - evita que un item quede con una opcion de un
+  // grupo no asociado a ese producto, o desactivada.
   private async assertValidAddOnSelections(cartItems: CartItemDto[]) {
     const itemsWithSelection = cartItems.filter((item) => item.selectedAddOnOptionId);
     for (const item of itemsWithSelection) {
       const option = await this.prisma.addOnOption.findUnique({
         where: { id: item.selectedAddOnOptionId! },
-        include: { group: true },
+        include: { group: { include: { productLinks: true } } },
       });
-      if (!option || !option.isActive || option.group.productId !== item.productId) {
+      const isLinkedToProduct = option?.group.productLinks.some(
+        (link) => link.productId === item.productId,
+      );
+      if (!option || !option.isActive || !isLinkedToProduct) {
         throw new BadRequestException(
           `La opcion de acompañante seleccionada no es valida para el producto '${item.productId}'.`,
         );

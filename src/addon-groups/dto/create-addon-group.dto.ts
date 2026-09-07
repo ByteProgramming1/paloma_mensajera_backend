@@ -1,7 +1,7 @@
 import { IsString, MinLength } from 'class-validator';
 
 export class CreateAddOnGroupDto {
-  // Nombre del grupo tal como se muestra al comprador, ej. "Elige tu carta".
+  // Nombre del grupo reutilizable, ej. "Cartas".
   @IsString()
   @MinLength(1)
   name: string;

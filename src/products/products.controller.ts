@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -14,7 +15,6 @@ import { Permissions } from '../common/enums/permissions';
 import { ProductsService } from './products.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
-import { CreateAddOnGroupDto } from './dto/create-addon-group.dto';
 
 @Controller('products')
 export class ProductsController {
@@ -48,11 +48,18 @@ export class ProductsController {
     return this.productsService.updateImage(id, file);
   }
 
-  // Crea un grupo de acompañantes para el producto (ej. "Elige tu carta").
-  // Las opciones del grupo se crean por separado, ver POST /add-on-options.
+  // Asocia/desasocia un grupo de acompañantes YA EXISTENTE (ver
+  // POST /addon-groups) al producto - el grupo y sus opciones se gestionan
+  // aparte, como catalogo reutilizable entre varios productos.
   @RequirePermissions(Permissions.PRODUCTS_MANAGE)
-  @Post(':id/addon-groups')
-  createAddOnGroup(@Param('id') id: string, @Body() dto: CreateAddOnGroupDto) {
-    return this.productsService.createAddOnGroup(id, dto);
+  @Post(':id/addon-groups/:groupId')
+  linkAddOnGroup(@Param('id') id: string, @Param('groupId') groupId: string) {
+    return this.productsService.linkAddOnGroup(id, groupId);
+  }
+
+  @RequirePermissions(Permissions.PRODUCTS_MANAGE)
+  @Delete(':id/addon-groups/:groupId')
+  unlinkAddOnGroup(@Param('id') id: string, @Param('groupId') groupId: string) {
+    return this.productsService.unlinkAddOnGroup(id, groupId);
   }
 }
