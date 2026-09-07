@@ -18,6 +18,7 @@ export const envValidationSchema = Joi.object({
   // Vercel del frontend en produccion). Sin definir, acepta cualquier origin
   // (ver src/main.ts) - asi funciona el desarrollo local sin configurar nada.
   CORS_ORIGIN: Joi.string().allow('').optional(),
+  FRONTEND_URL: Joi.string().uri().default('http://localhost:4200'),
   FIELD_ENCRYPTION_KEY: Joi.string()
     .pattern(/^[0-9a-fA-F]{64}$/)
     .required(),

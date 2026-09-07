@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { randomInt } from 'crypto';
+import { createHash, randomBytes, randomInt } from 'crypto';
 import { Prisma } from '../../prisma/postgresql/generated';
 import { PrismaService } from '../prisma/prisma.service';
 import { PasswordService } from './password.service';
@@ -19,9 +19,12 @@ import { MicrosoftLoginDto } from './dto/microsoft-login.dto';
 import { CreateTemporaryUserDto } from './dto/create-temporary-user.dto';
 import { RegisterDto } from './dto/register.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import { JwtPayload } from './jwt-payload.interface';
 
 const VERIFICATION_CODE_TTL_MINUTES = 15;
+const PASSWORD_RESET_TTL_MINUTES = 30;
 // Unico rol pensado para auto-registro (ver register()). No forma parte del
 // enum RoleSlug porque ese enum solo cubre los roles operativos internos
 // (admin/seller/etc.); "comprador" vive como fila normal en la tabla Role,
@@ -297,5 +300,53 @@ export class AuthService {
     });
 
     return this.issueSession(verifiedUser);
+  }
+
+  async forgotPassword(dto: ForgotPasswordDto) {
+    this.assertInstitutionalEmail(dto.email);
+    const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
+
+    if (user?.isActive && user.password) {
+      const token = randomBytes(32).toString('hex');
+      const tokenHash = this.hashResetToken(token);
+      await this.prisma.passwordResetToken.deleteMany({ where: { userId: user.id } });
+      await this.prisma.passwordResetToken.create({
+        data: {
+          userId: user.id,
+          tokenHash,
+          expiresAt: new Date(Date.now() + PASSWORD_RESET_TTL_MINUTES * 60 * 1000),
+        },
+      });
+      const frontendUrl = this.configService.get<string>('FRONTEND_URL') ?? 'http://localhost:4200';
+      const resetUrl = `${frontendUrl.replace(/\/$/, '')}/?resetToken=${encodeURIComponent(token)}`;
+      await this.mailerService.sendPasswordReset(user.email, resetUrl, user.name);
+    }
+
+    return {
+      message:
+        'Si existe una cuenta con ese correo, te enviaremos un enlace para recuperar tu contraseña.',
+    };
+  }
+
+  async resetPassword(dto: ResetPasswordDto) {
+    const tokenHash = this.hashResetToken(dto.token);
+    const resetToken = await this.prisma.passwordResetToken.findUnique({
+      where: { tokenHash },
+      include: { user: true },
+    });
+    if (!resetToken || resetToken.expiresAt.getTime() <= Date.now() || !resetToken.user.isActive) {
+      throw new BadRequestException('El enlace de recuperación es invalido o ya expiro.');
+    }
+
+    const password = await this.passwordService.hash(dto.password);
+    await this.prisma.$transaction([
+      this.prisma.user.update({ where: { id: resetToken.userId }, data: { password } }),
+      this.prisma.passwordResetToken.delete({ where: { id: resetToken.id } }),
+    ]);
+    return { message: 'Tu contraseña fue actualizada. Ya puedes iniciar sesion.' };
+  }
+
+  private hashResetToken(token: string): string {
+    return createHash('sha256').update(token).digest('hex');
   }
 }
