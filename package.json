@@ -20,13 +20,13 @@
     "test:cov": "jest --coverage",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "prisma:generate": "npm run prisma:generate:postgresql && npm run prisma:generate:sqlite",
-    "prisma:generate:postgresql": "prisma generate --schema=prisma/postgresql/schema.prisma",
-    "prisma:generate:sqlite": "prisma generate --schema=prisma/sqlite/schema.prisma",
-    "prisma:migrate": "prisma migrate dev --schema=prisma/postgresql/schema.prisma",
-    "prisma:migrate:sqlite": "prisma migrate dev --schema=prisma/sqlite/schema.prisma",
-    "prisma:deploy": "prisma migrate deploy --schema=prisma/postgresql/schema.prisma",
-    "prisma:deploy:sqlite": "prisma migrate deploy --schema=prisma/sqlite/schema.prisma",
-    "prisma:seed": "ts-node prisma/seed.ts"
+    "prisma:generate:postgresql": "node node_modules/prisma/build/index.js generate --schema=prisma/postgresql/schema.prisma",
+    "prisma:generate:sqlite": "node node_modules/prisma/build/index.js generate --schema=prisma/sqlite/schema.prisma",
+    "prisma:migrate": "node node_modules/prisma/build/index.js migrate dev --schema=prisma/postgresql/schema.prisma",
+    "prisma:migrate:sqlite": "node node_modules/prisma/build/index.js migrate dev --schema=prisma/sqlite/schema.prisma",
+    "prisma:deploy": "node node_modules/prisma/build/index.js migrate deploy --schema=prisma/postgresql/schema.prisma",
+    "prisma:deploy:sqlite": "node node_modules/prisma/build/index.js migrate deploy --schema=prisma/sqlite/schema.prisma",
+    "prisma:seed": "node node_modules/ts-node/dist/bin.js prisma/seed.ts"
   },
   "dependencies": {
     "@azure/storage-blob": "^12.33.0",
