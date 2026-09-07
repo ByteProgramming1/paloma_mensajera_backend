@@ -6,6 +6,7 @@ import { RoleSlug } from '../common/enums/domain.enums';
 import { AuthenticatedUser } from '../common/interfaces/authenticated-user.interface';
 import { RaffleNumbersService } from './raffle-numbers.service';
 import { DrawRoundDto } from './dto/draw-round.dto';
+import { ConfigureRaffleDto } from './dto/configure-raffle.dto';
 
 @Controller('raffle-numbers')
 export class RaffleNumbersController {
@@ -15,6 +16,14 @@ export class RaffleNumbersController {
   @Get()
   findMap() {
     return this.raffleNumbersService.findMap();
+  }
+
+  // El Administrador fija el total de numeros antes de abrir las ventas (ver
+  // RaffleNumbersService.configure - idempotente, nunca reduce el total).
+  @RequirePermissions(Permissions.RAFFLE_CONFIGURE)
+  @Post('configure')
+  configure(@Body() dto: ConfigureRaffleDto) {
+    return this.raffleNumbersService.configure(dto.count);
   }
 
   @RequirePermissions(Permissions.RAFFLE_DRAW_WINNER)

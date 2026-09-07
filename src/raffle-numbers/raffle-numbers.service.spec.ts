@@ -9,11 +9,25 @@ jest.mock('crypto', () => ({
 const randomInt = crypto.randomInt as jest.Mock;
 
 function buildPrismaMock() {
+  const raffleNumber = {
+    findMany: jest.fn(),
+    update: jest.fn(),
+    count: jest.fn(),
+    createMany: jest.fn(),
+  };
+  const order = { findUniqueOrThrow: jest.fn() };
+  const drawRound = { create: jest.fn(), count: jest.fn().mockResolvedValue(0) };
+  const tx = { raffleNumber, order, drawRound };
+
   return {
-    raffleNumber: { findMany: jest.fn(), update: jest.fn() },
-    order: { findUniqueOrThrow: jest.fn() },
-    drawRound: { create: jest.fn(), count: jest.fn().mockResolvedValue(0) },
-    $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
+    raffleNumber,
+    order,
+    drawRound,
+    $transaction: jest.fn((arg: unknown) =>
+      typeof arg === 'function'
+        ? (arg as (tx: unknown) => unknown)(tx)
+        : Promise.all(arg as Promise<unknown>[]),
+    ),
   };
 }
 
@@ -76,6 +90,44 @@ describe('RaffleNumbersService', () => {
       const result = await service.draw('admin1', false);
 
       expect(result.buyerFullName).toBeUndefined();
+    });
+  });
+
+  describe('configure', () => {
+    it('crea solo los numeros faltantes, en el rango contiguo', async () => {
+      const prisma = buildPrismaMock();
+      prisma.raffleNumber.count.mockResolvedValue(50);
+      prisma.raffleNumber.createMany.mockResolvedValue({ count: 50 });
+      const service = new RaffleNumbersService(prisma as never);
+
+      const result = await service.configure(100);
+
+      expect(prisma.raffleNumber.createMany).toHaveBeenCalledWith({
+        data: expect.arrayContaining([{ number: 51 }, { number: 100 }]),
+      });
+      const created = prisma.raffleNumber.createMany.mock.calls[0][0].data;
+      expect(created).toHaveLength(50);
+      expect(result).toEqual({ totalNumbers: 100, numbersCreated: 50 });
+    });
+
+    it('es idempotente: no crea nada si el total pedido ya existe', async () => {
+      const prisma = buildPrismaMock();
+      prisma.raffleNumber.count.mockResolvedValue(100);
+      const service = new RaffleNumbersService(prisma as never);
+
+      const result = await service.configure(100);
+
+      expect(prisma.raffleNumber.createMany).not.toHaveBeenCalled();
+      expect(result).toEqual({ totalNumbers: 100, numbersCreated: 0 });
+    });
+
+    it('rechaza un total menor al ya existente en vez de borrar numeros', async () => {
+      const prisma = buildPrismaMock();
+      prisma.raffleNumber.count.mockResolvedValue(100);
+      const service = new RaffleNumbersService(prisma as never);
+
+      await expect(service.configure(50)).rejects.toThrow(BadRequestException);
+      expect(prisma.raffleNumber.createMany).not.toHaveBeenCalled();
     });
   });
 
