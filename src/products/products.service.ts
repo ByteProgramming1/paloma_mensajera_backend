@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ImageStorageService } from '../storage/image-storage.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+import { CreateAddOnGroupDto } from './dto/create-addon-group.dto';
 
 @Injectable()
 export class ProductsService {
@@ -17,8 +18,18 @@ export class ProductsService {
     });
   }
 
+  // Incluye los grupos de acompañantes con sus opciones activas (ej. "Elige tu
+  // carta") para que el comprador pueda elegir una al agregar el producto al
+  // carrito - ver CartItemDto.selectedAddOnOptionId.
   findActive() {
-    return this.prisma.product.findMany({ where: { isActive: true } });
+    return this.prisma.product.findMany({
+      where: { isActive: true },
+      include: {
+        addOnGroups: {
+          include: { options: { where: { isActive: true } } },
+        },
+      },
+    });
   }
 
   findAll() {
@@ -40,6 +51,14 @@ export class ProductsService {
 
     const imageUrl = await this.imageStorageService.saveProductImage(id, file);
     return this.prisma.product.update({ where: { id }, data: { imageUrl } });
+  }
+
+  async createAddOnGroup(productId: string, dto: CreateAddOnGroupDto) {
+    await this.findOneOrThrow(productId);
+    return this.prisma.productAddOnGroup.create({
+      data: { productId, name: dto.name },
+      include: { options: true },
+    });
   }
 
   private async findOneOrThrow(id: string) {

@@ -9,7 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { MailerService } from '../mailer/mailer.service';
 import { Permissions } from '../common/enums/permissions';
 import { AuthenticatedUser } from '../common/interfaces/authenticated-user.interface';
-import { CreateOrderDto } from './dto/create-order.dto';
+import { CartItemDto, CreateOrderDto } from './dto/create-order.dto';
 import { VerifyMessageDto } from './dto/verify-message.dto';
 import { SelectRaffleNumberDto } from './dto/select-raffle-number.dto';
 import { VerifyPaymentDto } from './dto/verify-payment.dto';
@@ -47,6 +47,7 @@ export class OrdersService {
   // automatico ni IA (seccion 2 y 8.1 del SDD vigente): toda dedicatoria pasa
   // por revision 100% manual del Vendedor. No se toca stock ni rifa todavia.
   async createPublicOrder(dto: CreateOrderDto) {
+    await this.assertValidAddOnSelections(dto.cartItems);
     const orderSequence = (await this.prisma.order.count()) + 1;
 
     // Autorrecogida (seccion 3.1): si el comprador recoge su propio regalo,
@@ -91,6 +92,7 @@ export class OrdersService {
           create: dto.cartItems.map((item) => ({
             productId: item.productId,
             quantity: item.quantity,
+            selectedAddOnOptionId: item.selectedAddOnOptionId ?? null,
           })),
         },
         messageReview: {
@@ -422,6 +424,24 @@ export class OrdersService {
       case DeliveryAssignmentStatus.UNDELIVERED_RETRY:
       default:
         return OrderStatus.IN_ROUTE;
+    }
+  }
+
+  // Valida que cada opcion de acompañante elegida realmente pertenezca a un
+  // grupo del producto de esa misma linea del carrito, y este activa - evita
+  // que un item quede con una opcion de otro producto o desactivada.
+  private async assertValidAddOnSelections(cartItems: CartItemDto[]) {
+    const itemsWithSelection = cartItems.filter((item) => item.selectedAddOnOptionId);
+    for (const item of itemsWithSelection) {
+      const option = await this.prisma.addOnOption.findUnique({
+        where: { id: item.selectedAddOnOptionId! },
+        include: { group: true },
+      });
+      if (!option || !option.isActive || option.group.productId !== item.productId) {
+        throw new BadRequestException(
+          `La opcion de acompañante seleccionada no es valida para el producto '${item.productId}'.`,
+        );
+      }
     }
   }
 

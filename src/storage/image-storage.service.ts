@@ -36,6 +36,18 @@ export class ImageStorageService {
   }
 
   async saveProductImage(productId: string, file: Express.Multer.File): Promise<string> {
+    return this.saveImage('products', productId, file);
+  }
+
+  async saveAddOnOptionImage(optionId: string, file: Express.Multer.File): Promise<string> {
+    return this.saveImage('addon-options', optionId, file);
+  }
+
+  private async saveImage(
+    category: string,
+    entityId: string,
+    file: Express.Multer.File,
+  ): Promise<string> {
     this.assertValidFile(file);
 
     const provider = this.configService.get<string>('IMAGE_STORAGE_PROVIDER');
@@ -43,7 +55,7 @@ export class ImageStorageService {
     const fileName = `${Date.now()}-${sanitizedName}`;
 
     if (provider === 'AZURE_BLOB') {
-      return this.saveToAzureBlob(productId, fileName, file);
+      return this.saveToAzureBlob(category, entityId, fileName, file);
     }
 
     if (provider !== 'LOCAL_FILESYSTEM') {
@@ -52,11 +64,11 @@ export class ImageStorageService {
       );
     }
 
-    const productDir = join(process.cwd(), 'uploads', 'products', productId);
-    await mkdir(productDir, { recursive: true });
-    await writeFile(join(productDir, fileName), file.buffer);
+    const entityDir = join(process.cwd(), 'uploads', category, entityId);
+    await mkdir(entityDir, { recursive: true });
+    await writeFile(join(entityDir, fileName), file.buffer);
 
-    return `/uploads/products/${productId}/${fileName}`;
+    return `/uploads/${category}/${entityId}/${fileName}`;
   }
 
   private getBlobServiceClient(): BlobServiceClient {
@@ -73,7 +85,8 @@ export class ImageStorageService {
   }
 
   private async saveToAzureBlob(
-    productId: string,
+    category: string,
+    entityId: string,
     fileName: string,
     file: Express.Multer.File,
   ): Promise<string> {
@@ -85,7 +98,9 @@ export class ImageStorageService {
     }
 
     const containerClient = this.getBlobServiceClient().getContainerClient(containerName);
-    const blockBlobClient = containerClient.getBlockBlobClient(`products/${productId}/${fileName}`);
+    const blockBlobClient = containerClient.getBlockBlobClient(
+      `${category}/${entityId}/${fileName}`,
+    );
 
     await blockBlobClient.uploadData(file.buffer, {
       blobHTTPHeaders: { blobContentType: file.mimetype },

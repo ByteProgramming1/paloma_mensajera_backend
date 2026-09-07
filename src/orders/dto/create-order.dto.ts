@@ -23,6 +23,12 @@ export class CartItemDto {
   @IsInt()
   @Min(1)
   quantity: number;
+
+  // Opcion de acompañante elegida (ej. que carta especifica), si el producto
+  // tiene un grupo de acompañantes - ver ProductAddOnGroup/AddOnOption.
+  @IsOptional()
+  @IsUUID()
+  selectedAddOnOptionId?: string;
 }
 
 export class CreateOrderDto {

@@ -9,7 +9,7 @@ export const ORDER_WITH_RELATIONS = Prisma.validator<Prisma.OrderDefaultArgs>()(
     messageReview: true,
     paymentTransaction: true,
     raffleNumber: { select: { id: true, number: true, status: true } },
-    items: { include: { product: true } },
+    items: { include: { product: true, selectedAddOnOption: true } },
     deliveryAssignments: true,
   },
 });
@@ -30,6 +30,9 @@ function baseOrderFields(order: OrderWithRelations) {
       productName: item.product.name,
       quantity: item.quantity,
       unitPrice: item.unitPrice,
+      selectedAddOnOption: item.selectedAddOnOption
+        ? { id: item.selectedAddOnOption.id, name: item.selectedAddOnOption.name }
+        : null,
     })),
   };
 }
