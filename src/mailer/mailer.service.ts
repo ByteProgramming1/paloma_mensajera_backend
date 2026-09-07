@@ -31,9 +31,9 @@ export class MailerService {
   private hasOAuthConfig(): boolean {
     return Boolean(
       this.getSmtpUser() &&
-        this.configService.get<string>('ID_CLIENTE') &&
-        this.configService.get<string>('SECRETO_CLIENTE') &&
-        this.configService.get<string>('GOOGLE_REFRESH_TOKEN'),
+      this.configService.get<string>('ID_CLIENTE') &&
+      this.configService.get<string>('SECRETO_CLIENTE') &&
+      this.configService.get<string>('GOOGLE_REFRESH_TOKEN'),
     );
   }
 
