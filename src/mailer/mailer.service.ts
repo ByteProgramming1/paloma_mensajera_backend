@@ -3,6 +3,9 @@ import { ConfigService } from '@nestjs/config';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import * as nodemailer from 'nodemailer';
+import { resolve4 } from 'dns/promises';
+
+const GMAIL_SMTP_HOST = 'smtp.gmail.com';
 
 // Envio de correo via SMTP (seccion 16 del SDD, variables SMTP_* ya
 // declaradas). Se usa unicamente para el auto-registro con verificacion de
@@ -15,40 +18,94 @@ export class MailerService {
 
   constructor(private readonly configService: ConfigService) {}
 
+  // Debe reflejar exactamente las mismas condiciones que getTransporter() usa
+  // para elegir una rama valida: si isConfigured() da true pero falta algun
+  // dato (p.ej. ID_CLIENTE/SECRETO_CLIENTE/GOOGLE_REFRESH_TOKEN sin
+  // SMTP_USER/GMAIL), getTransporter() cae al host SMTP sin SMTP_HOST
+  // definido y nodemailer intenta conectarse a localhost:587 en vez de
+  // fallar con un 503 explicito.
   private isConfigured(): boolean {
+    return Boolean(this.configService.get<string>('SMTP_HOST') || this.hasOAuthConfig());
+  }
+
+  private hasOAuthConfig(): boolean {
     return Boolean(
-      this.configService.get<string>('SMTP_HOST') ||
-      (this.configService.get<string>('ID_CLIENTE') &&
-        this.configService.get<string>('SECRETO_CLIENTE') &&
-        this.configService.get<string>('GOOGLE_REFRESH_TOKEN')),
+      this.getSmtpUser() &&
+      this.configService.get<string>('ID_CLIENTE') &&
+      this.configService.get<string>('SECRETO_CLIENTE') &&
+      this.configService.get<string>('GOOGLE_REFRESH_TOKEN'),
     );
   }
 
-  private getTransporter(): nodemailer.Transporter {
+  private async getTransporter(): Promise<nodemailer.Transporter> {
     if (!this.transporter) {
-      const user = this.getSmtpUser();
-      const pass = this.configService.get<string>('SMTP_PASSWORD');
-      const clientId = this.configService.get<string>('ID_CLIENTE');
-      const clientSecret = this.configService.get<string>('SECRETO_CLIENTE');
-      const refreshToken = this.configService.get<string>('GOOGLE_REFRESH_TOKEN');
+      const host = this.configService.get<string>('SMTP_HOST');
       const transportOptions: Parameters<typeof nodemailer.createTransport>[0] =
-        user && clientId && clientSecret && refreshToken
+        this.hasOAuthConfig()
           ? {
-              service: 'gmail',
-              auth: { type: 'OAuth2', user, clientId, clientSecret, refreshToken },
-            }
-          : {
-              host: this.configService.get<string>('SMTP_HOST'),
-              port: this.configService.get<number>('SMTP_PORT'),
-              secure: this.configService.get<number>('SMTP_PORT') === 465,
+              // nodemailer resuelve smtp.gmail.com con dns.resolve4 + resolve6
+              // y elige una direccion AL AZAR entre ambas (ver
+              // shared/resolveHostname -> formatDNSValue, "random address");
+              // en un contenedor sin ruta IPv6 (como el App Service de
+              // produccion, confirmado con `net.connect({family:6})` ->
+              // EADDRNOTAVAIL) eso hace que ~la mitad de los envios cuelguen.
+              // Se resuelve IPv4 nosotros mismos y se pasa como host literal
+              // para que nodemailer no vuelva a elegir al azar (net.isIP
+              // corta esa logica); `servername` mantiene la verificacion TLS
+              // contra el nombre real en vez de la IP.
+              host: await this.resolveGmailIpv4(),
+              port: 465,
+              secure: true,
+              servername: GMAIL_SMTP_HOST,
               connectionTimeout: 10_000,
               greetingTimeout: 10_000,
               socketTimeout: 15_000,
-              ...(user && pass ? { auth: { user, pass } } : {}),
-            };
+              auth: {
+                type: 'OAuth2',
+                user: this.getSmtpUser(),
+                clientId: this.configService.get<string>('ID_CLIENTE'),
+                clientSecret: this.configService.get<string>('SECRETO_CLIENTE'),
+                refreshToken: this.configService.get<string>('GOOGLE_REFRESH_TOKEN'),
+              },
+            }
+          : (() => {
+              if (!host) {
+                // No debe ocurrir: isConfigured() ya descarta este caso antes de
+                // llegar aqui. Se lanza en vez de dejar que nodemailer intente
+                // localhost:587 por defecto.
+                throw new ServiceUnavailableException(
+                  'El envio de correos no esta configurado en el servidor (variables SMTP_*).',
+                );
+              }
+              const port = this.configService.get<number>('SMTP_PORT');
+              const user = this.getSmtpUser();
+              const pass = this.configService.get<string>('SMTP_PASSWORD');
+              return {
+                host,
+                port,
+                secure: port === 465,
+                connectionTimeout: 10_000,
+                greetingTimeout: 10_000,
+                socketTimeout: 15_000,
+                ...(user && pass ? { auth: { user, pass } } : {}),
+              };
+            })();
       this.transporter = nodemailer.createTransport(transportOptions);
     }
     return this.transporter;
+  }
+
+  private async resolveGmailIpv4(): Promise<string> {
+    try {
+      const addresses = await resolve4(GMAIL_SMTP_HOST);
+      return addresses[0];
+    } catch (error) {
+      this.logger.error(
+        `No se pudo resolver ${GMAIL_SMTP_HOST} por IPv4`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      throw new ServiceUnavailableException('No fue posible resolver el servidor de correo.');
+    }
   }
 
   async sendVerificationCode(email: string, code: string, name: string): Promise<void> {
@@ -73,7 +130,8 @@ export class MailerService {
     });
 
     try {
-      await this.getTransporter().sendMail({
+      const transporter = await this.getTransporter();
+      await transporter.sendMail({
         from: this.getFromAddress(),
         to: email,
         subject: 'Tu codigo de verificacion - Paloma Mensajera',
@@ -113,7 +171,8 @@ export class MailerService {
     });
 
     try {
-      await this.getTransporter().sendMail({
+      const transporter = await this.getTransporter();
+      await transporter.sendMail({
         from: this.getFromAddress(),
         to: email,
         subject: 'Recupera tu contraseña - Paloma Mensajera',
@@ -153,7 +212,8 @@ export class MailerService {
     });
 
     try {
-      await this.getTransporter().sendMail({
+      const transporter = await this.getTransporter();
+      await transporter.sendMail({
         from: this.getFromAddress(),
         to: email,
         subject: 'Tu compra ha sido entregada - Paloma Mensajera',
