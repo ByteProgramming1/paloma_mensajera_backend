@@ -21,6 +21,7 @@ import { SelectRaffleNumberDto } from './dto/select-raffle-number.dto';
 import { VerifyPaymentDto } from './dto/verify-payment.dto';
 import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
 import { FindOrdersQueryDto } from './dto/find-orders.query.dto';
+import { FindMyDeliveriesQueryDto } from './dto/find-my-deliveries.query.dto';
 
 @Controller('orders')
 export class OrdersController {
@@ -45,8 +46,8 @@ export class OrdersController {
   // (ver OrdersService.findMyDeliveries).
   @RequirePermissions(Permissions.ORDERS_READ_PUBLIC_SAFE)
   @Get('my-deliveries')
-  findMyDeliveries() {
-    return this.ordersService.findMyDeliveries();
+  findMyDeliveries(@Query() query: FindMyDeliveriesQueryDto) {
+    return this.ordersService.findMyDeliveries(query.includeDelivered);
   }
 
   @Get()
