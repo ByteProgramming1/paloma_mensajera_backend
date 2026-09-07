@@ -20,7 +20,9 @@ export class UsersService {
       : undefined;
 
     return this.prisma.user.findMany({
-      where: roleSlugs ? { role: { slug: { in: roleSlugs } } } : { role: { slug: { not: 'comprador' } } },
+      where: roleSlugs
+        ? { role: { slug: { in: roleSlugs } } }
+        : { role: { slug: { not: 'comprador' } } },
       orderBy: { name: 'asc' },
       select: {
         id: true,
