@@ -210,7 +210,11 @@ export class MailerService {
   private getLogoAttachment(): nodemailer.Attachment {
     const sourcePath = join(__dirname, 'assets', 'paloma-mensajera.png');
     const builtPath = join(process.cwd(), 'dist', 'mailer', 'assets', 'paloma-mensajera.png');
-    return { filename: 'paloma-mensajera.png', path: existsSync(sourcePath) ? sourcePath : builtPath, cid: 'paloma-logo' };
+    return {
+      filename: 'paloma-mensajera.png',
+      path: existsSync(sourcePath) ? sourcePath : builtPath,
+      cid: 'paloma-logo',
+    };
   }
 
   private escapeHtml(value: string): string {

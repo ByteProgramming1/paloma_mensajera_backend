@@ -322,7 +322,10 @@ export class AuthService {
       await this.mailerService.sendPasswordReset(user.email, resetUrl, user.name);
     }
 
-    return { message: 'Si existe una cuenta con ese correo, te enviaremos un enlace para recuperar tu contraseña.' };
+    return {
+      message:
+        'Si existe una cuenta con ese correo, te enviaremos un enlace para recuperar tu contraseña.',
+    };
   }
 
   async resetPassword(dto: ResetPasswordDto) {
