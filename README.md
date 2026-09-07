@@ -15,7 +15,15 @@ El rol `verifier` ya no existe (el SDD vigente lo elimina por completo): la revi
 
 ## Imagenes del catalogo
 
-`POST /products/:id/image` (rol `admin`, `multipart/form-data`, campo `file`) sube una imagen (JPEG/PNG/WebP, hasta `IMAGE_MAX_SIZE_MB`) y actualiza `Product.imageUrl`. Por defecto (`IMAGE_STORAGE_PROVIDER=LOCAL_FILESYSTEM`) se guarda en `uploads/products/<id>/` y se sirve como archivo estatico en `/uploads/...` - no requiere configurar nada mas. `IMAGE_STORAGE_PROVIDER=S3_COMPATIBLE` queda declarado en `.env` para cuando el equipo tenga un bucket real, pero todavia no esta implementado.
+`POST /products/:id/image` (rol `admin`, `multipart/form-data`, campo `file`) sube una imagen (JPEG/PNG/WebP, hasta `IMAGE_MAX_SIZE_MB`) y actualiza `Product.imageUrl`. Hay dos providers implementados, elegidos con `IMAGE_STORAGE_PROVIDER`:
+
+- **`LOCAL_FILESYSTEM`** (default) — se guarda en `uploads/products/<id>/` y se sirve como archivo estatico en `/uploads/...`. No requiere configurar nada mas.
+- **`AZURE_BLOB`** — sube al contenedor de [Azure Blob Storage](https://portal.azure.com) indicado y devuelve la URL publica del blob. Requiere:
+  - `AZURE_STORAGE_CONNECTION_STRING`: en Azure Portal → tu Storage Account → **Security + networking → Access keys** → copia el campo "Connection string" de cualquiera de las dos keys.
+  - `AZURE_STORAGE_CONTAINER_NAME`: el nombre del contenedor donde se guardan las imagenes (creas uno en **Data storage → Containers** si no existe).
+  - El contenedor debe tener **acceso publico de lectura a nivel "Blob"** (Container → Change access level → "Blob (anonymous read access for blobs only)"), porque las imagenes se sirven directo con la URL del blob, sin pasar por el backend.
+
+`IMAGE_STORAGE_PROVIDER=S3_COMPATIBLE` queda declarado en `.env` para un bucket S3 real, pero todavia no esta implementado.
 
 ## Requisitos
 
@@ -62,7 +70,7 @@ El acceso institucional se controla sin depender de Microsoft/Azure AD: **cualqu
 2. `POST /auth/verify-email` con `{ "email", "code" }`. Si el codigo es correcto y no ha expirado, la cuenta queda verificada (`emailVerifiedAt`) y la respuesta ya incluye la sesion (mismo formato que `POST /auth/login`).
 3. `POST /auth/login` rechaza con `401` a las cuentas con password que aun no verificaron su correo. Las cuentas creadas por un administrador (`POST /auth/temporary-user`) quedan verificadas de inmediato, porque ya hay alguien que dio fe de esa identidad.
 
-Requiere las variables `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER` y `SMTP_PASSWORD` en `.env` (puede ser una cuenta de Gmail/Outlook con una "contrasena de aplicacion", o cualquier proveedor SMTP). Sin `SMTP_HOST` configurado, `POST /auth/register` responde `503` en vez de fallar silenciosamente.
+Requiere las variables `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM` y, si el proveedor lo exige, `SMTP_USER`/`SMTP_PASSWORD` en `.env`. En Docker Compose, si `SMTP_HOST` está vacío usa Mailpit (`mailpit:1025`) y la bandeja web queda disponible en `http://localhost:8025`; si defines `SMTP_HOST=smtp.gmail.com`, Compose respeta la configuración de Gmail. Para Gmail puedes usar una contraseña de aplicación de 16 caracteres o OAuth2 con `GMAIL`, `ID_CLIENTE`, `SECRETO_CLIENTE` y `GOOGLE_REFRESH_TOKEN`. El client ID y client secret por sí solos no permiten enviar correo. Sin SMTP ni refresh token configurados, `POST /auth/register` responde `503` en vez de fallar silenciosamente.
 
 ## Inicio de sesion con Microsoft Entra ID (opcional, no activo por ahora)
 
@@ -94,7 +102,7 @@ La API queda disponible en `http://localhost:3000` (ver `PORT` en `.env`). `GET 
 docker compose up --build
 ```
 
-La API queda disponible en `http://localhost:3000` (`HOST_PORT` en `.env`). Las credenciales de Postgres se configuran con `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB` en `.env`. Para detener los contenedores:
+La API queda disponible en el puerto definido por `HOST_PORT` (en el entorno actual, `http://localhost:3001`). Mailpit queda en `http://localhost:8025`. Las credenciales de Postgres se configuran con `POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB` en `.env`. Para detener los contenedores:
 
 ```bash
 docker compose down

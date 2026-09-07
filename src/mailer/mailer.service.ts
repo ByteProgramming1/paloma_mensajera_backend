@@ -14,20 +14,37 @@ export class MailerService {
   constructor(private readonly configService: ConfigService) {}
 
   private isConfigured(): boolean {
-    return !!this.configService.get<string>('SMTP_HOST');
+    return Boolean(
+      this.configService.get<string>('SMTP_HOST') ||
+      (this.configService.get<string>('ID_CLIENTE') &&
+        this.configService.get<string>('SECRETO_CLIENTE') &&
+        this.configService.get<string>('GOOGLE_REFRESH_TOKEN')),
+    );
   }
 
   private getTransporter(): nodemailer.Transporter {
     if (!this.transporter) {
-      this.transporter = nodemailer.createTransport({
-        host: this.configService.get<string>('SMTP_HOST'),
-        port: this.configService.get<number>('SMTP_PORT'),
-        secure: this.configService.get<number>('SMTP_PORT') === 465,
-        auth: {
-          user: this.configService.get<string>('SMTP_USER'),
-          pass: this.configService.get<string>('SMTP_PASSWORD'),
-        },
-      });
+      const user = this.getSmtpUser();
+      const pass = this.configService.get<string>('SMTP_PASSWORD');
+      const clientId = this.configService.get<string>('ID_CLIENTE');
+      const clientSecret = this.configService.get<string>('SECRETO_CLIENTE');
+      const refreshToken = this.configService.get<string>('GOOGLE_REFRESH_TOKEN');
+      const transportOptions: Parameters<typeof nodemailer.createTransport>[0] =
+        user && clientId && clientSecret && refreshToken
+          ? {
+              service: 'gmail',
+              auth: { type: 'OAuth2', user, clientId, clientSecret, refreshToken },
+            }
+          : {
+              host: this.configService.get<string>('SMTP_HOST'),
+              port: this.configService.get<number>('SMTP_PORT'),
+              secure: this.configService.get<number>('SMTP_PORT') === 465,
+              connectionTimeout: 10_000,
+              greetingTimeout: 10_000,
+              socketTimeout: 15_000,
+              ...(user && pass ? { auth: { user, pass } } : {}),
+            };
+      this.transporter = nodemailer.createTransport(transportOptions);
     }
     return this.transporter;
   }
@@ -55,7 +72,7 @@ export class MailerService {
 
     try {
       await this.getTransporter().sendMail({
-        from: this.configService.get<string>('SMTP_USER'),
+        from: this.getFromAddress(),
         to: email,
         subject: 'Tu codigo de verificacion - Paloma Mensajera',
         text: `Hola ${name},\n\nTu codigo de verificacion es: ${code}\n\nExpira en 15 minutos. Si no solicitaste esto, ignora este correo.`,
@@ -94,7 +111,7 @@ export class MailerService {
 
     try {
       await this.getTransporter().sendMail({
-        from: this.configService.get<string>('SMTP_USER'),
+        from: this.getFromAddress(),
         to: email,
         subject: 'Tu compra ha sido entregada - Paloma Mensajera',
         text: `Hola ${buyerName},\n\nTu compra ya ha sido entregada correctamente a la persona que designaste.\n\nGracias por usar Paloma Mensajera.`,
@@ -152,5 +169,19 @@ export class MailerService {
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
+  }
+
+  private getFromAddress(): string {
+    return (
+      this.configService.get<string>('SMTP_FROM') || this.getSmtpUser() || 'no-reply@paloma.local'
+    );
+  }
+
+  private getSmtpUser(): string | undefined {
+    return (
+      this.configService.get<string>('SMTP_USER') ||
+      this.configService.get<string>('GMAIL') ||
+      undefined
+    );
   }
 }
