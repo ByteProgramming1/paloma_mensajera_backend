@@ -3,6 +3,9 @@ import { ConfigService } from '@nestjs/config';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import * as nodemailer from 'nodemailer';
+import { resolve4 } from 'dns/promises';
+
+const GMAIL_SMTP_HOST = 'smtp.gmail.com';
 
 // Envio de correo via SMTP (seccion 16 del SDD, variables SMTP_* ya
 // declaradas). Se usa unicamente para el auto-registro con verificacion de
@@ -34,18 +37,26 @@ export class MailerService {
     );
   }
 
-  private getTransporter(): nodemailer.Transporter {
+  private async getTransporter(): Promise<nodemailer.Transporter> {
     if (!this.transporter) {
       const host = this.configService.get<string>('SMTP_HOST');
       const transportOptions: Parameters<typeof nodemailer.createTransport>[0] =
         this.hasOAuthConfig()
           ? {
-              service: 'gmail',
-              // Timeouts explicitos (igual que la rama SMTP de abajo): sin
-              // esto, nodemailer usa su default de 2 minutos por intento de
-              // conexion, y con las 2 direcciones que resuelve (IPv4 + IPv6,
-              // ver shared/resolveHostname) un fallo puede tardar hasta ~4
-              // minutos en reportarse en vez de fallar rapido con un 503.
+              // nodemailer resuelve smtp.gmail.com con dns.resolve4 + resolve6
+              // y elige una direccion AL AZAR entre ambas (ver
+              // shared/resolveHostname -> formatDNSValue, "random address");
+              // en un contenedor sin ruta IPv6 (como el App Service de
+              // produccion, confirmado con `net.connect({family:6})` ->
+              // EADDRNOTAVAIL) eso hace que ~la mitad de los envios cuelguen.
+              // Se resuelve IPv4 nosotros mismos y se pasa como host literal
+              // para que nodemailer no vuelva a elegir al azar (net.isIP
+              // corta esa logica); `servername` mantiene la verificacion TLS
+              // contra el nombre real en vez de la IP.
+              host: await this.resolveGmailIpv4(),
+              port: 465,
+              secure: true,
+              servername: GMAIL_SMTP_HOST,
               connectionTimeout: 10_000,
               greetingTimeout: 10_000,
               socketTimeout: 15_000,
@@ -84,6 +95,19 @@ export class MailerService {
     return this.transporter;
   }
 
+  private async resolveGmailIpv4(): Promise<string> {
+    try {
+      const addresses = await resolve4(GMAIL_SMTP_HOST);
+      return addresses[0];
+    } catch (error) {
+      this.logger.error(
+        `No se pudo resolver ${GMAIL_SMTP_HOST} por IPv4`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      throw new ServiceUnavailableException('No fue posible resolver el servidor de correo.');
+    }
+  }
+
   async sendVerificationCode(email: string, code: string, name: string): Promise<void> {
     if (!this.isConfigured()) {
       throw new ServiceUnavailableException(
@@ -106,7 +130,8 @@ export class MailerService {
     });
 
     try {
-      await this.getTransporter().sendMail({
+      const transporter = await this.getTransporter();
+      await transporter.sendMail({
         from: this.getFromAddress(),
         to: email,
         subject: 'Tu codigo de verificacion - Paloma Mensajera',
@@ -186,7 +211,8 @@ export class MailerService {
     });
 
     try {
-      await this.getTransporter().sendMail({
+      const transporter = await this.getTransporter();
+      await transporter.sendMail({
         from: this.getFromAddress(),
         to: email,
         subject: 'Tu compra ha sido entregada - Paloma Mensajera',
