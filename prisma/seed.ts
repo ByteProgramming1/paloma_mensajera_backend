@@ -77,14 +77,18 @@ async function seedAdminUser() {
 
   const adminRole = await prisma.role.findUniqueOrThrow({ where: { slug: 'admin' } });
 
+  // El seed ya da fe de la identidad del admin inicial, igual que
+  // createTemporaryUser (ver AuthService) - sin esto, ADMIN_SEED_PASSWORD
+  // quedaba inutilizable porque login() exige emailVerifiedAt.
   await prisma.user.upsert({
     where: { email },
-    update: {},
+    update: { emailVerifiedAt: new Date() },
     create: {
       email,
       name: 'Administrador Paloma Mensajera',
       password: passwordHash,
       roleId: adminRole.id,
+      emailVerifiedAt: new Date(),
     },
   });
 }
