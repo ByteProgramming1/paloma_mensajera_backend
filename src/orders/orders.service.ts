@@ -13,7 +13,6 @@ import { CartItemDto, CreateOrderDto } from './dto/create-order.dto';
 import { VerifyMessageDto } from './dto/verify-message.dto';
 import { SelectRaffleNumberDto } from './dto/select-raffle-number.dto';
 import { VerifyPaymentDto } from './dto/verify-payment.dto';
-import { AssignDeliveryDto } from './dto/assign-delivery.dto';
 import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
 import { buildOrderCode } from './order-code.util';
 import {
@@ -243,45 +242,24 @@ export class OrdersService {
     });
   }
 
-  async assignDelivery(orderId: string, dto: AssignDeliveryDto) {
+  // "Tomar" una entrega ya no es una accion aparte del Administrador: es
+  // simplemente ser quien hace el primer cambio de estado de un pedido en
+  // estado entregable (ver findMyDeliveries, que ya no filtra por vendedor
+  // asignado). DeliveryAssignment se sigue usando para dejar registro de
+  // quien la marco, pero no bloquea a nadie mas de tomarla despues.
+  async updateDeliveryStatus(
+    orderId: string,
+    deliveryPersonId: string,
+    dto: UpdateDeliveryStatusDto,
+  ) {
     const order = await this.findOrderOrThrow(orderId);
-    if (order.status !== OrderStatus.PAYMENT_VERIFIED) {
-      throw new BadRequestException(
-        'Solo se puede asignar un encargado a pedidos con pago verificado.',
-      );
-    }
-
-    const deliveryPerson = await this.prisma.user.findUnique({
-      where: { id: dto.deliveryPersonId },
-      include: { role: true },
-    });
-    if (
-      !deliveryPerson ||
-      ![RoleSlug.SELLER, RoleSlug.DELIVERY].includes(deliveryPerson.role.slug as RoleSlug)
-    ) {
-      throw new BadRequestException(
-        'El responsable de entrega debe ser un usuario con rol Vendedor.',
-      );
-    }
-
-    return this.prisma.$transaction(async (tx) => {
-      const assignment = await tx.deliveryAssignment.create({
-        data: { orderId, deliveryPersonId: dto.deliveryPersonId },
-      });
-      await tx.order.update({ where: { id: orderId }, data: { status: OrderStatus.IN_ROUTE } });
-      return assignment;
-    });
-  }
-
-  async updateDeliveryStatus(orderId: string, dto: UpdateDeliveryStatusDto) {
-    await this.findOrderOrThrow(orderId);
-
-    const assignment = await this.prisma.deliveryAssignment.findFirst({
-      where: { orderId },
-      orderBy: { assignedAt: 'desc' },
-    });
-    if (!assignment) {
-      throw new BadRequestException('Este pedido no tiene un encargado asignado.');
+    const deliverableStatuses: string[] = [
+      OrderStatus.PAYMENT_VERIFIED,
+      OrderStatus.IN_PREPARATION,
+      OrderStatus.IN_ROUTE,
+    ];
+    if (!deliverableStatuses.includes(order.status)) {
+      throw new BadRequestException('Este pedido no esta en un estado listo para entrega.');
     }
 
     const isDelivered = dto.status === DeliveryAssignmentStatus.DELIVERED;
@@ -290,16 +268,24 @@ export class OrdersService {
     }
 
     const { updatedAssignment, deliveryDetail } = await this.prisma.$transaction(async (tx) => {
-      const updatedAssignment = await tx.deliveryAssignment.update({
-        where: { id: assignment.id },
-        data: {
-          status: dto.status,
-          receivedBy: dto.receivedBy,
-          teamsConfirmationLog: dto.teamsConfirmationLog,
-          notes: dto.notes,
-          deliveredAt: isDelivered ? new Date() : undefined,
-        },
+      const existingAssignment = await tx.deliveryAssignment.findFirst({
+        where: { orderId },
+        orderBy: { assignedAt: 'desc' },
       });
+      const assignmentData = {
+        deliveryPersonId,
+        status: dto.status,
+        receivedBy: dto.receivedBy,
+        teamsConfirmationLog: dto.teamsConfirmationLog,
+        notes: dto.notes,
+        deliveredAt: isDelivered ? new Date() : undefined,
+      };
+      const updatedAssignment = existingAssignment
+        ? await tx.deliveryAssignment.update({
+            where: { id: existingAssignment.id },
+            data: assignmentData,
+          })
+        : await tx.deliveryAssignment.create({ data: { orderId, ...assignmentData } });
 
       await tx.order.update({
         where: { id: orderId },
@@ -405,10 +391,17 @@ export class OrdersService {
     return serializeOrderFull(order);
   }
 
-  async findMyDeliveries(deliveryPersonId: string) {
+  // Todas las entregas pendientes le salen a todos los vendedores por igual:
+  // cualquiera puede tomar y marcar cualquiera, sin que el Administrador la
+  // asigne primero a alguien en particular.
+  async findMyDeliveries() {
     const orders = await this.prisma.order.findMany({
       ...ORDER_WITH_RELATIONS,
-      where: { deliveryAssignments: { some: { deliveryPersonId } } },
+      where: {
+        status: {
+          in: [OrderStatus.PAYMENT_VERIFIED, OrderStatus.IN_PREPARATION, OrderStatus.IN_ROUTE],
+        },
+      },
       orderBy: { createdAt: 'desc' },
     });
     return orders.map(serializeOrderSafe);
