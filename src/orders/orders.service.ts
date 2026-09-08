@@ -349,6 +349,24 @@ export class OrdersService {
     return matching.map(serializeOrderMessageView);
   }
 
+  // Historico completo del comprador (seccion "Mis pedidos"): buyerEmail es
+  // la unica relacion con la cuenta (no hay un buyerId real en Order - ver
+  // findOneForUser), y esta cifrado igual que buyerFullName/recipientFullName,
+  // asi que el filtro tambien se aplica en memoria tras el fetch. Devuelve la
+  // vista completa (igual que findOneForUser para el dueño): es su propia
+  // compra, sin nada que ocultarle a si mismo.
+  async findMyOrders(email: string) {
+    const orders = await this.prisma.order.findMany({
+      ...ORDER_WITH_RELATIONS,
+      orderBy: { createdAt: 'desc' },
+    });
+    const needle = email.toLowerCase();
+    const matching = orders.filter(
+      (order) => order.deliveryDetail?.buyerEmail?.toLowerCase() === needle,
+    );
+    return matching.map(serializeOrderFull);
+  }
+
   // Mismo motivo que findMessageQueue: recipientFullName tambien esta
   // cifrado, el filtro se aplica en memoria tras el fetch.
   async findByRecipientName(recipientName: string) {

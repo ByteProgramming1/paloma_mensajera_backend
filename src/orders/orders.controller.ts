@@ -50,6 +50,14 @@ export class OrdersController {
     return this.ordersService.findMyDeliveries(query.includeDelivered);
   }
 
+  // Historico completo del comprador (todos sus pedidos, no solo el ultimo
+  // que el frontend recordaba en localStorage) - ver OrdersService.findMyOrders.
+  @RequirePermissions(Permissions.ORDERS_READ_OWN)
+  @Get('mine')
+  findMine(@CurrentUser() user: AuthenticatedUser) {
+    return this.ordersService.findMyOrders(user.email);
+  }
+
   @Get()
   findOrders(@CurrentUser() user: AuthenticatedUser, @Query() query: FindOrdersQueryDto) {
     if (query.view === 'message') {
