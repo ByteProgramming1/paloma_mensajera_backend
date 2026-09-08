@@ -1,8 +1,9 @@
 import { join } from 'path';
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
+import { translateValidationErrors } from './common/validation-error-translator';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -12,6 +13,10 @@ async function bootstrap() {
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
+      // Sin esto, un DTO invalido responde con los mensajes en ingles crudo
+      // que genera class-validator por defecto (ej. "password must be longer
+      // than or equal to 1 characters") - ver validation-error-translator.
+      exceptionFactory: (errors) => new BadRequestException(translateValidationErrors(errors)),
     }),
   );
 
