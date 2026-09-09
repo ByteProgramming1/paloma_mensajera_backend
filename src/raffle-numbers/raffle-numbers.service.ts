@@ -106,6 +106,19 @@ export class RaffleNumbersService {
     });
   }
 
+  // Reset total para reutilizar la plataforma en un futuro evento: borra
+  // todos los numeros de rifa y, como DrawRound.raffleNumberId es una FK
+  // obligatoria hacia RaffleNumber, primero hay que vaciar el historial de
+  // sorteos para no violar la restriccion (si no, el delete de raffleNumber
+  // fallaria contra cualquier numero que ya haya sido ganador).
+  async resetAll() {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.drawRound.deleteMany({});
+      const { count } = await tx.raffleNumber.deleteMany({});
+      return { deletedCount: count };
+    });
+  }
+
   drawHistory() {
     return this.prisma.drawRound.findMany({
       orderBy: { drawnAt: 'desc' },

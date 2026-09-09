@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Post } from '@nestjs/common';
 import { RequirePermissions } from '../common/decorators/permissions.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/enums/permissions';
@@ -46,5 +46,14 @@ export class RaffleNumbersController {
   @Get('draw-history')
   drawHistory() {
     return this.raffleNumbersService.drawHistory();
+  }
+
+  // Reset total (admin-only via RAFFLE_CONFIGURE, mismo permiso que fija el
+  // total de numeros) para reutilizar la plataforma en un futuro evento -
+  // borra todos los numeros de rifa y su historial de sorteos asociado.
+  @RequirePermissions(Permissions.RAFFLE_CONFIGURE)
+  @Delete()
+  resetAll() {
+    return this.raffleNumbersService.resetAll();
   }
 }
