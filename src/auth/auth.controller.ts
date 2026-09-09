@@ -1,8 +1,10 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Get, Post } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { Public } from '../common/decorators/public.decorator';
 import { RequirePermissions } from '../common/decorators/permissions.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Permissions } from '../common/enums/permissions';
+import { AuthenticatedUser } from '../common/interfaces/authenticated-user.interface';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { MicrosoftLoginDto } from './dto/microsoft-login.dto';
@@ -73,5 +75,19 @@ export class AuthController {
   @Post('temporary-user')
   createTemporaryUser(@Body() dto: CreateTemporaryUserDto) {
     return this.authService.createTemporaryUser(dto);
+  }
+
+  // Permite al frontend revalidar rol/permisos vigentes sin re-loguear (el
+  // accessToken sigue siendo valido, solo puede tener roleSlug/permissions
+  // obsoletos si un admin reasigno el rol despues de emitido). No requiere
+  // permisos especiales: solo estar autenticado. `user` ya viene fresco desde
+  // JwtStrategy.validate(), que re-consulta la BD en cada request.
+  @Get('me')
+  me(@CurrentUser() user: AuthenticatedUser) {
+    return {
+      user: { id: user.userId, email: user.email, name: user.name, role: user.roleSlug },
+      roleSlug: user.roleSlug,
+      permissions: user.permissions,
+    };
   }
 }
