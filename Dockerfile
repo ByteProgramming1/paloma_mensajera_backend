@@ -20,5 +20,6 @@ ENV NODE_ENV=production
 EXPOSE 3000
 
 # PostgreSQL es el motor principal (ver DATABASE_PROVIDER); "prisma:deploy" y
-# "prisma:seed" operan sobre prisma/postgresql por defecto.
-CMD ["sh", "-c", "npm run prisma:deploy && npm run prisma:seed && node dist/main.js"]
+# "prisma:seed" operan sobre prisma/postgresql por defecto. Ver scripts/start.js
+# para el flujo condicional segun RESET_DATABASE_ON_DEPLOY.
+CMD ["node", "scripts/start.js"]

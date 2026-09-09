@@ -8,7 +8,7 @@
     "postinstall": "node scripts/postinstall.js",
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\"",
-    "start": "npm run prisma:deploy && npm run prisma:seed && node dist/main",
+    "start": "node scripts/start.js",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
@@ -26,6 +26,7 @@
     "prisma:migrate:sqlite": "node node_modules/prisma/build/index.js migrate dev --schema=prisma/sqlite/schema.prisma",
     "prisma:deploy": "node node_modules/prisma/build/index.js migrate deploy --schema=prisma/postgresql/schema.prisma",
     "prisma:deploy:sqlite": "node node_modules/prisma/build/index.js migrate deploy --schema=prisma/sqlite/schema.prisma",
+    "prisma:reset": "node node_modules/prisma/build/index.js migrate reset --schema=prisma/postgresql/schema.prisma --force --skip-generate",
     "prisma:seed": "node node_modules/ts-node/dist/bin.js prisma/seed.ts"
   },
   "dependencies": {
