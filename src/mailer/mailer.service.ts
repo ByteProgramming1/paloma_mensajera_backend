@@ -235,6 +235,49 @@ export class MailerService {
     }
   }
 
+  // Confirmacion al comprador cuando su dedicatoria fue aprobada (solo se
+  // dispara para compras ONLINE - ver OrdersService.verifyMessage). Mismo
+  // criterio que sendDeliveryConfirmation: si SMTP no esta configurado o el
+  // envio falla, solo se registra y no se interrumpe el flujo de revision.
+  async sendMessageApprovedConfirmation(email: string, buyerName: string): Promise<void> {
+    if (!this.isConfigured()) {
+      this.logger.warn(
+        `SMTP no configurado: no se envio la confirmacion de dedicatoria a ${email}.`,
+      );
+      return;
+    }
+
+    const safeName = this.escapeHtml(buyerName);
+    const html = this.buildEmailShell({
+      eyebrow: 'Dedicatorias',
+      heading: 'Tu dedicatoria fue aprobada',
+      bodyHtml: `
+        <p style="margin:0 0 16px;color:#1f2937;font-size:15px;">Hola <strong>${safeName}</strong>,</p>
+        <p style="margin:0 0 20px;color:#4b5563;font-size:14px;line-height:1.5;">Tu dedicatoria ya fue revisada y aprobada. Ya puedes continuar con tu compra en Paloma Mensajera.</p>
+        <div style="text-align:center;">
+          <span style="display:inline-block;background-color:#d27b9f;color:#ffffff;font-size:12px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;padding:6px 16px;border-radius:999px;">Aprobada</span>
+        </div>
+      `,
+    });
+
+    try {
+      const transporter = await this.getTransporter();
+      await transporter.sendMail({
+        from: this.getFromAddress(),
+        to: email,
+        subject: 'Tu dedicatoria fue aprobada - Paloma Mensajera',
+        text: `Hola ${buyerName},\n\nTu dedicatoria ya fue revisada y aprobada.\n\nGracias por usar Paloma Mensajera.`,
+        html,
+        attachments: [this.getLogoAttachment()],
+      });
+    } catch (error) {
+      this.logger.error(
+        `No se pudo enviar la confirmacion de dedicatoria aprobada a ${email}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
+  }
+
   // Estructura visual compartida por todos los correos (seccion de marca):
   // encabezado en degradado con los colores de Paloma Mensajera, tarjeta
   // blanca para el contenido especifico de cada correo, y pie de pagina fijo.

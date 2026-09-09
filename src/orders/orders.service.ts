@@ -22,6 +22,7 @@ import {
   PaymentMethod,
   RaffleNumberStatus,
   RoleSlug,
+  SalesChannel,
 } from '../common/enums/domain.enums';
 import {
   ORDER_WITH_RELATIONS,
@@ -116,7 +117,7 @@ export class OrdersService {
       throw new BadRequestException('rejectionReason es obligatorio cuando approved es false.');
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const messageReview = await this.prisma.$transaction(async (tx) => {
       await tx.order.update({
         where: { id: orderId },
         data: {
@@ -134,6 +135,19 @@ export class OrdersService {
         },
       });
     });
+
+    // Notificacion al comprador solo si la compra fue ONLINE (si fue
+    // PRESENCIAL, el Vendedor ya se lo dice en persona) - se envia fuera de
+    // la transaccion y no bloquea la revision si el correo falla, igual que
+    // updateDeliveryStatus con sendDeliveryConfirmation.
+    if (dto.approved && order.salesChannel === SalesChannel.ONLINE && order.deliveryDetail) {
+      await this.mailerService.sendMessageApprovedConfirmation(
+        order.deliveryDetail.buyerEmail,
+        order.deliveryDetail.buyerFullName,
+      );
+    }
+
+    return messageReview;
   }
 
   // Solo con MESSAGE_APPROVED - descuenta stock del carrito, asigna el numero
@@ -466,7 +480,10 @@ export class OrdersService {
   }
 
   private async findOrderOrThrow(orderId: string) {
-    const order = await this.prisma.order.findUnique({ where: { id: orderId } });
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { deliveryDetail: true },
+    });
     if (!order) {
       throw new NotFoundException(`Pedido '${orderId}' no encontrado.`);
     }
