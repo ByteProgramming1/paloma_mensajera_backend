@@ -28,6 +28,7 @@ export class UsersService {
         expiresAt: true,
         roleExpiresAt: true,
         createdAt: true,
+        emailVerifiedAt: true,
         role: { select: { slug: true, name: true } },
       },
     });
