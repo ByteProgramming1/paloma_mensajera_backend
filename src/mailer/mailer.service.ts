@@ -7,6 +7,30 @@ import { resolve4 } from 'dns/promises';
 
 const GMAIL_SMTP_HOST = 'smtp.gmail.com';
 
+// Codigos/errores transitorios (throttling, sobrecarga momentanea del
+// proveedor) que ameritan reintentar el envio; todo lo demas (credenciales
+// invalidas, destinatario rechazado de forma permanente, etc.) se deja pasar
+// tal cual para no ocultar un error real detras de reintentos inutiles.
+const RETRYABLE_RESPONSE_CODES = [421, 450, 451, 452];
+const RETRYABLE_ERROR_CODES = ['ETIMEDOUT', 'ECONNECTION', 'ESOCKET', 'ECONNRESET'];
+const RETRY_DELAYS_MS = [1000, 3000, 7000];
+
+function isRetryableSendError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const withCodes = error as Error & { responseCode?: number; code?: string };
+  if (withCodes.responseCode && RETRYABLE_RESPONSE_CODES.includes(withCodes.responseCode)) {
+    return true;
+  }
+  if (withCodes.code && RETRYABLE_ERROR_CODES.includes(withCodes.code)) {
+    return true;
+  }
+  return false;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // Envio de correo via SMTP (seccion 16 del SDD, variables SMTP_* ya
 // declaradas). Se usa unicamente para el auto-registro con verificacion de
 // correo: no depende de Microsoft Graph ni de Azure AD para nada, por lo que
@@ -66,6 +90,9 @@ export class MailerService {
           connectionTimeout: 10_000,
           greetingTimeout: 10_000,
           socketTimeout: 15_000,
+          pool: true,
+          maxConnections: 3,
+          maxMessages: 50,
           auth: {
             type: 'OAuth2',
             user: this.getSmtpUser(),
@@ -93,10 +120,40 @@ export class MailerService {
             connectionTimeout: 10_000,
             greetingTimeout: 10_000,
             socketTimeout: 15_000,
+            pool: true,
+            maxConnections: 3,
+            maxMessages: 50,
             ...(user && pass ? { auth: { user, pass } } : {}),
           };
         })();
     return nodemailer.createTransport(transportOptions);
+  }
+
+  // Reintenta el envio ante errores transitorios del proveedor SMTP (p.ej.
+  // 421 4.4.5 "Server busy" de Exchange Online/Gmail bajo throttling). Cada
+  // intento pide un transporter nuevo via getTransporter porque, en la rama
+  // Gmail OAuth, eso re-resuelve la IP (ver comentario de getTransporter).
+  private async sendWithRetry(buildMailOptions: () => nodemailer.SendMailOptions): Promise<void> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+      try {
+        const transporter = await this.getTransporter();
+        await transporter.sendMail(buildMailOptions());
+        return;
+      } catch (error) {
+        lastError = error;
+        if (!isRetryableSendError(error) || attempt === RETRY_DELAYS_MS.length) {
+          throw error;
+        }
+        this.logger.warn(
+          `Envio de correo fallo con error transitorio (intento ${attempt + 1}/${RETRY_DELAYS_MS.length + 1}), reintentando: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+        await delay(RETRY_DELAYS_MS[attempt]);
+      }
+    }
+    throw lastError;
   }
 
   private async resolveGmailIpv4(): Promise<string> {
@@ -136,15 +193,14 @@ export class MailerService {
     });
 
     try {
-      const transporter = await this.getTransporter();
-      await transporter.sendMail({
+      await this.sendWithRetry(() => ({
         from: this.getFromAddress(),
         to: email,
         subject: 'Tu codigo de verificacion - Paloma Mensajera',
         text: `Hola ${name},\n\nTu codigo de verificacion es: ${code}\n\nExpira en 15 minutos. Si no solicitaste esto, ignora este correo.`,
         html,
         attachments: [this.getLogoAttachment()],
-      });
+      }));
     } catch (error) {
       this.logger.error(
         `No se pudo enviar el correo de verificacion a ${email}`,
@@ -177,15 +233,14 @@ export class MailerService {
     });
 
     try {
-      const transporter = await this.getTransporter();
-      await transporter.sendMail({
+      await this.sendWithRetry(() => ({
         from: this.getFromAddress(),
         to: email,
         subject: 'Recupera tu contraseña - Paloma Mensajera',
         text: `Hola ${name},\n\nCambia tu contraseña aquí: ${resetUrl}\n\nEste enlace expira en 30 minutos. Si no solicitaste este cambio, ignora este correo.`,
         html,
         attachments: [this.getLogoAttachment()],
-      });
+      }));
     } catch (error) {
       this.logger.error(
         `No se pudo enviar el correo de recuperacion a ${email}`,
@@ -218,15 +273,14 @@ export class MailerService {
     });
 
     try {
-      const transporter = await this.getTransporter();
-      await transporter.sendMail({
+      await this.sendWithRetry(() => ({
         from: this.getFromAddress(),
         to: email,
         subject: 'Tu compra ha sido entregada - Paloma Mensajera',
         text: `Hola ${buyerName},\n\nTu compra ya ha sido entregada correctamente a la persona que designaste.\n\nGracias por usar Paloma Mensajera.`,
         html,
         attachments: [this.getLogoAttachment()],
-      });
+      }));
     } catch (error) {
       this.logger.error(
         `No se pudo enviar la confirmacion de entrega a ${email}`,
@@ -261,15 +315,14 @@ export class MailerService {
     });
 
     try {
-      const transporter = await this.getTransporter();
-      await transporter.sendMail({
+      await this.sendWithRetry(() => ({
         from: this.getFromAddress(),
         to: email,
         subject: 'Tu dedicatoria fue aprobada - Paloma Mensajera',
         text: `Hola ${buyerName},\n\nTu dedicatoria ya fue revisada y aprobada.\n\nGracias por usar Paloma Mensajera.`,
         html,
         attachments: [this.getLogoAttachment()],
-      });
+      }));
     } catch (error) {
       this.logger.error(
         `No se pudo enviar la confirmacion de dedicatoria aprobada a ${email}`,
