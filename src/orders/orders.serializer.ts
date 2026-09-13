@@ -7,7 +7,11 @@ export const ORDER_WITH_RELATIONS = Prisma.validator<Prisma.OrderDefaultArgs>()(
   include: {
     deliveryDetail: true,
     messageReview: true,
-    paymentTransaction: true,
+    // verifiedByAdmin: solo el nombre, para resolver verifiedByName en
+    // serializeOrderFull sin exponer el resto del User (rol, correo, etc.) -
+    // ver seccion "trazabilidad de caja" (quien aprobo un pago PRESENCIAL en
+    // efectivo, para investigar descuadres).
+    paymentTransaction: { include: { verifiedByAdmin: { select: { name: true } } } },
     raffleNumber: { select: { id: true, number: true, status: true } },
     items: { include: { product: true, selectedAddOnOption: true } },
     deliveryAssignments: true,
@@ -56,7 +60,20 @@ export function serializeOrderFull(order: OrderWithRelations) {
     letterContent: order.deliveryDetail?.letterContent,
     isAnonymous: order.deliveryDetail?.isAnonymous,
     teamsNotificationSent: order.deliveryDetail?.teamsNotificationSent,
-    payment: order.paymentTransaction,
+    // verifiedByName se resuelve desde verifiedByAdminId (aplica igual para
+    // ONLINE que para PRESENCIAL, sin condicionar por canal) - el admin lo
+    // usa para investigar descuadres de caja fisica en pagos en efectivo.
+    payment: order.paymentTransaction
+      ? {
+          id: order.paymentTransaction.id,
+          paymentMethod: order.paymentTransaction.paymentMethod,
+          verified: order.paymentTransaction.verified,
+          verifiedByAdminId: order.paymentTransaction.verifiedByAdminId,
+          verifiedByName: order.paymentTransaction.verifiedByAdmin?.name ?? null,
+          verifiedAt: order.paymentTransaction.verifiedAt,
+          verificationNotes: order.paymentTransaction.verificationNotes,
+        }
+      : null,
     messageReview: order.messageReview
       ? {
           humanReviewStatus: order.messageReview.humanReviewStatus,
