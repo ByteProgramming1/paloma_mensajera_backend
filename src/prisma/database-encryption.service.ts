@@ -55,13 +55,18 @@ export class DatabaseEncryptionService {
       return value;
     }
 
-    const [prefix, version, encodedIv, encodedAuthTag, encodedCiphertext] = value.split(':');
+    // split(':') en exactamente 5 partes: un ciphertext vacio (string
+    // original '') es legitimo y queda como segmento '' (falsy pero
+    // presente) - por eso se compara contra undefined, no contra falsy.
+    const parts = value.split(':');
+    const [prefix, version, encodedIv, encodedAuthTag, encodedCiphertext] = parts;
     if (
+      parts.length !== 5 ||
       prefix !== 'enc' ||
       version !== 'v1' ||
-      !encodedIv ||
-      !encodedAuthTag ||
-      !encodedCiphertext
+      encodedIv === undefined ||
+      encodedAuthTag === undefined ||
+      encodedCiphertext === undefined
     ) {
       throw new BadRequestException('El valor cifrado tiene un formato invalido.');
     }

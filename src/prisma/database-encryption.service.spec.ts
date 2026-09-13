@@ -19,6 +19,13 @@ describe('DatabaseEncryptionService', () => {
     expect(service.decrypt(encrypted)).toBe(plaintext);
   });
 
+  it('cifra y descifra un string vacio (letterContent opcional) sin rechazarlo como formato invalido', () => {
+    const encrypted = service.encrypt('');
+
+    expect(encrypted).toMatch(/^enc:v1:/);
+    expect(service.decrypt(encrypted)).toBe('');
+  });
+
   it('usa un IV nuevo para cada cifrado', () => {
     const first = service.encrypt('mismo valor');
     const second = service.encrypt('mismo valor');
