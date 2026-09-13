@@ -55,6 +55,17 @@ export class OrdersService {
     const orderSequence = (await this.prisma.order.count()) + 1;
     const hasLetterContent = !!dto.letterContent?.trim();
 
+    // Snapshot del precio vigente al armar el carrito (seccion 10.2 del SDD):
+    // el comprador ya conoce el precio desde este momento, no hace falta
+    // esperar a selectRaffleNumber para mostrarle un total real - eso queda
+    // solo para el descuento de stock, que si se difiere hasta que la
+    // dedicatoria este aprobada.
+    const unitPrices = await this.resolveUnitPrices(dto.cartItems);
+    const totalAmount = dto.cartItems.reduce(
+      (sum, item) => sum + unitPrices.get(item.productId)! * item.quantity,
+      0,
+    );
+
     // Autorrecogida (seccion 3.1): si el comprador recoge su propio regalo,
     // no existen datos de un destinatario distinto - se copian los suyos. El
     // formulario no pide un "usuario de Teams" aparte para el comprador (solo
@@ -79,6 +90,7 @@ export class OrdersService {
         status: hasLetterContent
           ? OrderStatus.MESSAGE_PENDING_REVIEW
           : OrderStatus.MESSAGE_APPROVED,
+        totalAmount,
         salesChannel: dto.salesChannel,
         assistedBySellerId: dto.assistedBySellerId ?? null,
         deliveryDetail: {
@@ -99,6 +111,7 @@ export class OrdersService {
           create: dto.cartItems.map((item) => ({
             productId: item.productId,
             quantity: item.quantity,
+            unitPrice: unitPrices.get(item.productId)!,
             selectedAddOnOptionId: item.selectedAddOnOptionId ?? null,
           })),
         },
@@ -176,7 +189,9 @@ export class OrdersService {
     return this.prisma.$transaction(async (tx) => {
       const items = await tx.orderItem.findMany({ where: { orderId } });
 
-      let totalAmount = 0;
+      // El precio (unitPrice/totalAmount del pedido) ya quedo fijado como
+      // snapshot en createPublicOrder - aca solo se valida disponibilidad y
+      // se descuenta stock, sin volver a tocar el precio.
       for (const item of items) {
         const product = await tx.product.findUnique({ where: { id: item.productId } });
         if (!product || !product.isActive || product.stock < item.quantity) {
@@ -188,11 +203,6 @@ export class OrdersService {
           where: { id: item.productId },
           data: { stock: { decrement: item.quantity } },
         });
-        await tx.orderItem.update({
-          where: { id: item.id },
-          data: { unitPrice: product.price },
-        });
-        totalAmount += product.price * item.quantity;
       }
 
       // Asignacion atomica del numero de rifa, sin estado HELD ni expiracion por tiempo.
@@ -214,7 +224,7 @@ export class OrdersService {
 
       return tx.order.update({
         where: { id: orderId },
-        data: { status: OrderStatus.PAYMENT_PENDING, totalAmount },
+        data: { status: OrderStatus.PAYMENT_PENDING },
       });
     });
   }
@@ -511,6 +521,26 @@ export class OrdersService {
         'Este pedido incluye un producto que solo se puede recoger en el stand, no se puede enviar a otra persona.',
       );
     }
+  }
+
+  // Precio vigente de cada producto del carrito al momento de crear el
+  // pedido (snapshot) - ver createPublicOrder. No valida stock/isActive aca:
+  // esa disponibilidad se sigue verificando recien en selectRaffleNumber,
+  // que es cuando de verdad se descuenta.
+  private async resolveUnitPrices(cartItems: CartItemDto[]) {
+    const productIds = [...new Set(cartItems.map((item) => item.productId))];
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: productIds } },
+      select: { id: true, price: true },
+    });
+
+    const unitPrices = new Map(products.map((product) => [product.id, product.price]));
+    const missingProductId = productIds.find((productId) => !unitPrices.has(productId));
+    if (missingProductId) {
+      throw new BadRequestException(`El producto '${missingProductId}' no existe.`);
+    }
+
+    return unitPrices;
   }
 
   private async findOrderOrThrow(orderId: string) {
