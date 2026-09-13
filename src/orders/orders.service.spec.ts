@@ -293,6 +293,66 @@ describe('OrdersService', () => {
       );
     });
 
+    it('descuenta tambien el stock del producto enlazado a la opcion elegida', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({ id: 'o1', status: OrderStatus.MESSAGE_APPROVED });
+      prisma.__tx.orderItem.findMany.mockResolvedValue([
+        {
+          id: 'i1',
+          productId: 'combo1',
+          quantity: 2,
+          selectedAddOnOption: { id: 'opt1', linkedProductId: 'paleta1' },
+        },
+      ]);
+      prisma.__tx.product.findUnique.mockImplementation(
+        ({ where: { id } }: { where: { id: string } }) =>
+          Promise.resolve(
+            id === 'combo1'
+              ? { id: 'combo1', name: 'Combo', isActive: true, stock: 10 }
+              : { id: 'paleta1', name: 'Paleta', isActive: true, stock: 10 },
+          ),
+      );
+      prisma.__tx.raffleNumber.updateMany.mockResolvedValue({ count: 1 });
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await service.selectRaffleNumber('o1', { raffleNumberId: 'r1' } as never);
+
+      expect(prisma.__tx.product.update).toHaveBeenCalledWith({
+        where: { id: 'combo1' },
+        data: { stock: { decrement: 2 } },
+      });
+      expect(prisma.__tx.product.update).toHaveBeenCalledWith({
+        where: { id: 'paleta1' },
+        data: { stock: { decrement: 2 } },
+      });
+    });
+
+    it('rechaza si el producto enlazado a la opcion elegida no tiene stock, aunque el combo si', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({ id: 'o1', status: OrderStatus.MESSAGE_APPROVED });
+      prisma.__tx.orderItem.findMany.mockResolvedValue([
+        {
+          id: 'i1',
+          productId: 'combo1',
+          quantity: 2,
+          selectedAddOnOption: { id: 'opt1', linkedProductId: 'paleta1' },
+        },
+      ]);
+      prisma.__tx.product.findUnique.mockImplementation(
+        ({ where: { id } }: { where: { id: string } }) =>
+          Promise.resolve(
+            id === 'combo1'
+              ? { id: 'combo1', name: 'Combo', isActive: true, stock: 10 }
+              : { id: 'paleta1', name: 'Paleta', isActive: true, stock: 1 },
+          ),
+      );
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await expect(service.selectRaffleNumber('o1', { raffleNumberId: 'r1' })).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
     it('crea el pago como CASH si el pedido es PRESENCIAL', async () => {
       const prisma = buildPrismaMock();
       prisma.order.findUnique.mockResolvedValue({
@@ -442,6 +502,37 @@ describe('OrdersService', () => {
       const paymentUpdate = prisma.__tx.paymentTransaction.update.mock.calls[0][0];
       expect(paymentUpdate.data.verifiedByAdminId).toBe('admin1');
       expect(paymentUpdate.data.verified).toBe(false);
+    });
+
+    it('al rechazar el pago, tambien restaura el stock del producto enlazado al acompañante', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'o1',
+        status: OrderStatus.PAYMENT_PENDING,
+        salesChannel: SalesChannel.ONLINE,
+      });
+      prisma.__tx.orderItem.findMany.mockResolvedValue([
+        {
+          id: 'i1',
+          productId: 'combo1',
+          quantity: 2,
+          selectedAddOnOption: { id: 'opt1', linkedProductId: 'paleta1' },
+        },
+      ]);
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await service.verifyPayment('o1', { userId: 'admin1', roleSlug: RoleSlug.ADMIN }, {
+        verified: false,
+      } as never);
+
+      expect(prisma.__tx.product.update).toHaveBeenCalledWith({
+        where: { id: 'combo1' },
+        data: { stock: { increment: 2 } },
+      });
+      expect(prisma.__tx.product.update).toHaveBeenCalledWith({
+        where: { id: 'paleta1' },
+        data: { stock: { increment: 2 } },
+      });
     });
   });
 

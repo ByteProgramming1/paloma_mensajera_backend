@@ -16,15 +16,29 @@ export class AddOnOptionsService {
     if (!group) {
       throw new BadRequestException(`El grupo de acompañantes '${dto.groupId}' no existe.`);
     }
+    if (dto.linkedProductId) {
+      await this.assertProductExists(dto.linkedProductId);
+    }
 
     return this.prisma.addOnOption.create({
-      data: { groupId: dto.groupId, name: dto.name },
+      data: { groupId: dto.groupId, name: dto.name, linkedProductId: dto.linkedProductId ?? null },
     });
   }
 
   async update(id: string, dto: UpdateAddOnOptionDto) {
     await this.findOneOrThrow(id);
+    if (dto.linkedProductId) {
+      await this.assertProductExists(dto.linkedProductId);
+    }
+
     return this.prisma.addOnOption.update({ where: { id }, data: dto });
+  }
+
+  private async assertProductExists(productId: string) {
+    const product = await this.prisma.product.findUnique({ where: { id: productId } });
+    if (!product) {
+      throw new BadRequestException(`El producto '${productId}' no existe.`);
+    }
   }
 
   // Sube la imagen al almacenamiento configurado (mismo patron que

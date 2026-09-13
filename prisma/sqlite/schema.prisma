@@ -135,6 +135,12 @@ model Product {
   // (tabla de union) y AddOnGroup (el catalogo reutilizable en si).
   addOnGroupLinks ProductAddOnGroup[]
 
+  // Producto que TAMBIEN se vende solo (ej. la paleta), ademas de venir como
+  // acompañante de un combo - ver AddOnOption.linkedProductId. El stock vive
+  // unicamente aca: vendida sola o embebida en un combo, descuenta del mismo
+  // numero, en vez de llevar un conteo separado por cada lado.
+  linkedAddOnOptions AddOnOption[]
+
   @@map("products")
 }
 
@@ -174,6 +180,14 @@ model AddOnOption {
   imageUrl   String?
   isActive   Boolean     @default(true)
   orderItems OrderItem[]
+
+  // Si esta opcion en realidad es un producto vendible por separado (ej. la
+  // paleta que a veces va sola y a veces de acompañante), apunta a esa fila
+  // en vez de declarar su propio precio/stock - ver Product.linkedAddOnOptions.
+  // Nulo si la opcion es puramente decorativa (ej. "Carta rosa"), sin
+  // contraparte vendible.
+  linkedProductId String?
+  linkedProduct   Product? @relation(fields: [linkedProductId], references: [id], onDelete: SetNull)
 
   @@map("addon_options")
 }

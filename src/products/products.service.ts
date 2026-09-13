@@ -22,12 +22,24 @@ export class ProductsService {
   // una al agregar el producto al carrito - ver CartItemDto.selectedAddOnOptionId.
   // Se aplana la tabla de union (addOnGroupLinks) para mantener el mismo
   // contrato externo `addOnGroups: [...]` de antes del catalogo reutilizable.
+  // Cada opcion trae tambien el stock/isActive vigente de su linkedProduct
+  // (si tiene uno, ver AddOnOption.linkedProductId) para que el front pueda
+  // deshabilitarla cuando ese stock compartido ya se agoto.
   async findActive() {
     const products = await this.prisma.product.findMany({
       where: { isActive: true },
       include: {
         addOnGroupLinks: {
-          include: { group: { include: { options: { where: { isActive: true } } } } },
+          include: {
+            group: {
+              include: {
+                options: {
+                  where: { isActive: true },
+                  include: { linkedProduct: { select: { stock: true, isActive: true } } },
+                },
+              },
+            },
+          },
         },
       },
     });
