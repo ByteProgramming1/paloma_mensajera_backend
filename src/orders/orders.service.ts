@@ -76,7 +76,9 @@ export class OrdersService {
     return this.prisma.order.create({
       data: {
         orderCode: buildOrderCode(orderSequence),
-        status: hasLetterContent ? OrderStatus.MESSAGE_PENDING_REVIEW : OrderStatus.MESSAGE_APPROVED,
+        status: hasLetterContent
+          ? OrderStatus.MESSAGE_PENDING_REVIEW
+          : OrderStatus.MESSAGE_APPROVED,
         salesChannel: dto.salesChannel,
         assistedBySellerId: dto.assistedBySellerId ?? null,
         deliveryDetail: {
