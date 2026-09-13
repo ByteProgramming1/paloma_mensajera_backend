@@ -114,6 +114,40 @@ describe('OrdersService', () => {
       ).rejects.toThrow(BadRequestException);
       expect(prisma.order.create).not.toHaveBeenCalled();
     });
+
+    it('arranca en MESSAGE_APPROVED y sin revisor si no hay dedicatoria', async () => {
+      const prisma = buildPrismaMock();
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await service.createPublicOrder({
+        ...baseDto,
+        letterContent: '   ',
+        selfPickup: true,
+      } as never);
+
+      const createArgs = prisma.order.create.mock.calls[0][0];
+      expect(createArgs.data.status).toBe(OrderStatus.MESSAGE_APPROVED);
+      expect(createArgs.data.messageReview.create.humanReviewStatus).toBe(
+        HumanReviewStatus.APPROVED,
+      );
+      expect(createArgs.data.messageReview.create.reviewedByUserId).toBeUndefined();
+    });
+
+    it('sigue el flujo normal de revision si hay dedicatoria', async () => {
+      const prisma = buildPrismaMock();
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await service.createPublicOrder({
+        ...baseDto,
+        selfPickup: true,
+      } as never);
+
+      const createArgs = prisma.order.create.mock.calls[0][0];
+      expect(createArgs.data.status).toBe(OrderStatus.MESSAGE_PENDING_REVIEW);
+      expect(createArgs.data.messageReview.create.humanReviewStatus).toBe(
+        HumanReviewStatus.PENDING,
+      );
+    });
   });
 
   describe('verifyMessage', () => {

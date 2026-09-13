@@ -46,10 +46,14 @@ export class OrdersService {
   // Crea el pedido directo en MESSAGE_PENDING_REVIEW - sin ningun filtro
   // automatico ni IA (seccion 2 y 8.1 del SDD vigente): toda dedicatoria pasa
   // por revision 100% manual del Vendedor. No se toca stock ni rifa todavia.
+  // Excepcion: si no hay dedicatoria (letterContent opcional, ver
+  // CreateOrderDto), no hay nada que un Vendedor pueda revisar - el pedido
+  // arranca directo en MESSAGE_APPROVED, sin pasar por la cola de mensajes.
   async createPublicOrder(dto: CreateOrderDto) {
     await this.assertValidAddOnSelections(dto.cartItems);
     await this.assertGiftableIfNotSelfPickup(dto);
     const orderSequence = (await this.prisma.order.count()) + 1;
+    const hasLetterContent = !!dto.letterContent?.trim();
 
     // Autorrecogida (seccion 3.1): si el comprador recoge su propio regalo,
     // no existen datos de un destinatario distinto - se copian los suyos. El
@@ -72,7 +76,9 @@ export class OrdersService {
     return this.prisma.order.create({
       data: {
         orderCode: buildOrderCode(orderSequence),
-        status: OrderStatus.MESSAGE_PENDING_REVIEW,
+        status: hasLetterContent
+          ? OrderStatus.MESSAGE_PENDING_REVIEW
+          : OrderStatus.MESSAGE_APPROVED,
         salesChannel: dto.salesChannel,
         assistedBySellerId: dto.assistedBySellerId ?? null,
         deliveryDetail: {
@@ -96,8 +102,14 @@ export class OrdersService {
             selectedAddOnOptionId: item.selectedAddOnOptionId ?? null,
           })),
         },
+        // Sin dedicatoria, se marca como aprobado de una vez (sin revisor
+        // humano) para que las pantallas que leen messageReview.humanReviewStatus
+        // (ej. admin/orders-page) no muestren un pedido MESSAGE_APPROVED con
+        // un estado PENDING inconsistente.
         messageReview: {
-          create: { humanReviewStatus: HumanReviewStatus.PENDING },
+          create: hasLetterContent
+            ? { humanReviewStatus: HumanReviewStatus.PENDING }
+            : { humanReviewStatus: HumanReviewStatus.APPROVED, reviewedAt: new Date() },
         },
       },
     });
