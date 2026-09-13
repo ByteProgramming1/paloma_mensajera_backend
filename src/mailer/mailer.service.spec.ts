@@ -6,7 +6,9 @@ import { MailerService } from './mailer.service';
 jest.mock('nodemailer');
 
 function throttledError(): Error {
-  const error = new Error('Invalid greeting. response=421 4.4.5 Server busy, try again later.') as Error & {
+  const error = new Error(
+    'Invalid greeting. response=421 4.4.5 Server busy, try again later.',
+  ) as Error & {
     responseCode: number;
   };
   error.responseCode = 421;

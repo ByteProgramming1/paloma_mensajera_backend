@@ -133,9 +133,7 @@ export class MailerService {
   // 421 4.4.5 "Server busy" de Exchange Online/Gmail bajo throttling). Cada
   // intento pide un transporter nuevo via getTransporter porque, en la rama
   // Gmail OAuth, eso re-resuelve la IP (ver comentario de getTransporter).
-  private async sendWithRetry(
-    buildMailOptions: () => nodemailer.SendMailOptions,
-  ): Promise<void> {
+  private async sendWithRetry(buildMailOptions: () => nodemailer.SendMailOptions): Promise<void> {
     let lastError: unknown;
     for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
       try {
