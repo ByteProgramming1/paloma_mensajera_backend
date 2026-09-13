@@ -218,8 +218,12 @@ export class OrdersService {
         data: { orderId },
       });
 
+      // Metodo de pago segun el canal de venta (seccion "pago fisico en stand
+      // vs digital"): PRESENCIAL es efectivo en el stand, ONLINE es Nequi/Bre-B.
+      const paymentMethod =
+        order.salesChannel === SalesChannel.PRESENCIAL ? PaymentMethod.CASH : PaymentMethod.NEQUI;
       await tx.paymentTransaction.create({
-        data: { orderId, paymentMethod: PaymentMethod.NEQUI, verified: false },
+        data: { orderId, paymentMethod, verified: false },
       });
 
       return tx.order.update({

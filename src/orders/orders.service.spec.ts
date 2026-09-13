@@ -292,6 +292,40 @@ describe('OrdersService', () => {
         BadRequestException,
       );
     });
+
+    it('crea el pago como CASH si el pedido es PRESENCIAL', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'o1',
+        status: OrderStatus.MESSAGE_APPROVED,
+        salesChannel: SalesChannel.PRESENCIAL,
+      });
+      prisma.__tx.raffleNumber.updateMany.mockResolvedValue({ count: 1 });
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await service.selectRaffleNumber('o1', { raffleNumberId: 'r1' } as never);
+
+      expect(prisma.__tx.paymentTransaction.create).toHaveBeenCalledWith({
+        data: { orderId: 'o1', paymentMethod: 'CASH', verified: false },
+      });
+    });
+
+    it('crea el pago como NEQUI si el pedido es ONLINE', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'o1',
+        status: OrderStatus.MESSAGE_APPROVED,
+        salesChannel: SalesChannel.ONLINE,
+      });
+      prisma.__tx.raffleNumber.updateMany.mockResolvedValue({ count: 1 });
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await service.selectRaffleNumber('o1', { raffleNumberId: 'r1' } as never);
+
+      expect(prisma.__tx.paymentTransaction.create).toHaveBeenCalledWith({
+        data: { orderId: 'o1', paymentMethod: 'NEQUI', verified: false },
+      });
+    });
   });
 
   describe('verifyPayment', () => {
