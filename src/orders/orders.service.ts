@@ -218,8 +218,12 @@ export class OrdersService {
         data: { orderId },
       });
 
+      // Metodo de pago segun el canal de venta (seccion "pago fisico en stand
+      // vs digital"): PRESENCIAL es efectivo en el stand, ONLINE es Nequi/Bre-B.
+      const paymentMethod =
+        order.salesChannel === SalesChannel.PRESENCIAL ? PaymentMethod.CASH : PaymentMethod.NEQUI;
       await tx.paymentTransaction.create({
-        data: { orderId, paymentMethod: PaymentMethod.NEQUI, verified: false },
+        data: { orderId, paymentMethod, verified: false },
       });
 
       return tx.order.update({
@@ -229,16 +233,25 @@ export class OrdersService {
     });
   }
 
-  // Confirma/rechaza el pago. Tarea EXCLUSIVA del Administrador, sin ningun
-  // alcance para el Vendedor (seccion 3.3, 11.2 y HU-05 del SDD vigente): el
-  // guard de permisos ya bloquea a cualquier otro rol, y este chequeo explicito
-  // es defensa adicional para que nunca dependa solo de como quede la matriz.
+  // Confirma/rechaza el pago. Quien puede hacerlo depende del canal de venta
+  // (regla de negocio, no solo del permiso plano orders:verify_payment que ya
+  // exige el guard): ONLINE sigue siendo exclusivo del Administrador (el
+  // unico que revisa la cuenta de Nequi/Bre-B); PRESENCIAL (efectivo en el
+  // stand) es exclusivo del Vendedor, el Administrador no tiene alcance ahi.
   async verifyPayment(orderId: string, actingUser: ActingUser, dto: VerifyPaymentDto) {
-    if (actingUser.roleSlug !== RoleSlug.ADMIN) {
-      throw new ForbiddenException('Solo el Administrador puede confirmar o rechazar un pago.');
+    const order = await this.findOrderOrThrow(orderId);
+
+    if (order.salesChannel === SalesChannel.ONLINE && actingUser.roleSlug !== RoleSlug.ADMIN) {
+      throw new ForbiddenException(
+        'Solo el Administrador puede confirmar o rechazar un pago en linea (Nequi/Bre-B).',
+      );
+    }
+    if (order.salesChannel === SalesChannel.PRESENCIAL && actingUser.roleSlug !== RoleSlug.SELLER) {
+      throw new ForbiddenException(
+        'Ese pago presencial debe confirmarlo un Vendedor en el stand, no el Administrador.',
+      );
     }
 
-    const order = await this.findOrderOrThrow(orderId);
     if (order.status !== OrderStatus.PAYMENT_PENDING) {
       throw new BadRequestException('Este pedido ya fue verificado.');
     }

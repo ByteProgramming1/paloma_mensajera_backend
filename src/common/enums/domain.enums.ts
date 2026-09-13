@@ -43,6 +43,7 @@ export enum ModerationMethod {
 
 export enum PaymentMethod {
   NEQUI = 'NEQUI',
+  CASH = 'CASH',
 }
 
 export enum ProductType {
