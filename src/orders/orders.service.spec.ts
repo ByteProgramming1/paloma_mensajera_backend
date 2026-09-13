@@ -407,7 +407,7 @@ describe('OrdersService', () => {
       expect(prisma.__tx.deliveryAssignment.create).not.toHaveBeenCalled();
     });
 
-    it('al marcar como entregado, envia el correo de confirmacion al comprador', async () => {
+    it('al marcar como entregado a otra persona (selfPickup false), envia el correo de confirmacion al comprador', async () => {
       const prisma = buildPrismaMock();
       prisma.order.findUnique.mockResolvedValue({ id: 'o1', status: OrderStatus.IN_ROUTE });
       prisma.__tx.deliveryAssignment.findFirst.mockResolvedValue({ id: 'a1' });
@@ -415,6 +415,7 @@ describe('OrdersService', () => {
       prisma.__tx.deliveryDetail.findUnique.mockResolvedValue({
         buyerEmail: 'ana@escuelaing.edu.co',
         buyerFullName: 'Ana Compradora',
+        selfPickup: false,
       });
       const mailer = buildMailerMock();
       const service = new OrdersService(prisma as never, mailer as never);
@@ -428,6 +429,27 @@ describe('OrdersService', () => {
         'ana@escuelaing.edu.co',
         'Ana Compradora',
       );
+    });
+
+    it('al marcar como entregado con autorrecogida (selfPickup true), no envia correo', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({ id: 'o1', status: OrderStatus.IN_ROUTE });
+      prisma.__tx.deliveryAssignment.findFirst.mockResolvedValue({ id: 'a1' });
+      prisma.__tx.deliveryAssignment.update.mockResolvedValue({ id: 'a1', status: 'DELIVERED' });
+      prisma.__tx.deliveryDetail.findUnique.mockResolvedValue({
+        buyerEmail: 'ana@escuelaing.edu.co',
+        buyerFullName: 'Ana Compradora',
+        selfPickup: true,
+      });
+      const mailer = buildMailerMock();
+      const service = new OrdersService(prisma as never, mailer as never);
+
+      await service.updateDeliveryStatus('o1', 'seller1', {
+        status: 'DELIVERED',
+        receivedBy: 'Ana',
+      } as never);
+
+      expect(mailer.sendDeliveryConfirmation).not.toHaveBeenCalled();
     });
 
     it('no envia correo si el estado no es entregado', async () => {

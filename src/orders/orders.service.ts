@@ -338,8 +338,11 @@ export class OrdersService {
 
     // Notificacion al comprador (seccion "entrega" del SDD): se envia fuera de
     // la transaccion (I/O externo) y no bloquea la confirmacion de entrega si
-    // el correo falla - ver MailerService.sendDeliveryConfirmation.
-    if (deliveryDetail) {
+    // el correo falla - ver MailerService.sendDeliveryConfirmation. Solo
+    // aplica si el pedido iba dirigido a otra persona (selfPickup false): si
+    // el comprador recogio su propio pedido, ya presencio la entrega y no
+    // tiene sentido avisarle por correo que "se entrego".
+    if (deliveryDetail && !deliveryDetail.selfPickup) {
       await this.mailerService.sendDeliveryConfirmation(
         deliveryDetail.buyerEmail,
         deliveryDetail.buyerFullName,
