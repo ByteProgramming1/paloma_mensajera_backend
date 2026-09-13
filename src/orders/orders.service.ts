@@ -5,6 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '../../prisma/postgresql/generated';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailerService } from '../mailer/mailer.service';
 import { Permissions } from '../common/enums/permissions';
@@ -187,22 +188,25 @@ export class OrdersService {
     }
 
     return this.prisma.$transaction(async (tx) => {
-      const items = await tx.orderItem.findMany({ where: { orderId } });
+      const items = await tx.orderItem.findMany({
+        where: { orderId },
+        include: { selectedAddOnOption: true },
+      });
 
       // El precio (unitPrice/totalAmount del pedido) ya quedo fijado como
       // snapshot en createPublicOrder - aca solo se valida disponibilidad y
       // se descuenta stock, sin volver a tocar el precio.
       for (const item of items) {
-        const product = await tx.product.findUnique({ where: { id: item.productId } });
-        if (!product || !product.isActive || product.stock < item.quantity) {
-          throw new BadRequestException(
-            `Stock insuficiente para '${product?.name ?? item.productId}'.`,
-          );
+        await this.decrementProductStock(tx, item.productId, item.quantity);
+
+        // El acompañante elegido puede ser en realidad un producto vendible
+        // por separado (ej. la paleta) - ver AddOnOption.linkedProductId. El
+        // stock compartido se descuenta igual, sea que se venda solo o venga
+        // embebido en un combo.
+        const linkedProductId = item.selectedAddOnOption?.linkedProductId;
+        if (linkedProductId) {
+          await this.decrementProductStock(tx, linkedProductId, item.quantity);
         }
-        await tx.product.update({
-          where: { id: item.productId },
-          data: { stock: { decrement: item.quantity } },
-        });
       }
 
       // Asignacion atomica del numero de rifa, sin estado HELD ni expiracion por tiempo.
@@ -271,12 +275,26 @@ export class OrdersService {
           where: { orderId },
           data: { status: RaffleNumberStatus.AVAILABLE, orderId: null },
         });
-        const items = await tx.orderItem.findMany({ where: { orderId } });
+        const items = await tx.orderItem.findMany({
+          where: { orderId },
+          include: { selectedAddOnOption: true },
+        });
         for (const item of items) {
           await tx.product.update({
             where: { id: item.productId },
             data: { stock: { increment: item.quantity } },
           });
+
+          // Simetrico al descuento en selectRaffleNumber: si el acompañante
+          // elegido tenia un producto vendible enlazado, tambien se le
+          // restaura el stock.
+          const linkedProductId = item.selectedAddOnOption?.linkedProductId;
+          if (linkedProductId) {
+            await tx.product.update({
+              where: { id: linkedProductId },
+              data: { stock: { increment: item.quantity } },
+            });
+          }
         }
       }
 
@@ -557,6 +575,25 @@ export class OrdersService {
     }
 
     return unitPrices;
+  }
+
+  // Valida disponibilidad y descuenta stock de un producto - usado tanto para
+  // el producto principal de un OrderItem como para el producto vendible
+  // enlazado a la opcion de acompañante elegida (ver AddOnOption.linkedProductId),
+  // asi ambos casos comparten exactamente el mismo stock/chequeo.
+  private async decrementProductStock(
+    tx: Prisma.TransactionClient,
+    productId: string,
+    quantity: number,
+  ) {
+    const product = await tx.product.findUnique({ where: { id: productId } });
+    if (!product || !product.isActive || product.stock < quantity) {
+      throw new BadRequestException(`Stock insuficiente para '${product?.name ?? productId}'.`);
+    }
+    await tx.product.update({
+      where: { id: productId },
+      data: { stock: { decrement: quantity } },
+    });
   }
 
   private async findOrderOrThrow(orderId: string) {
