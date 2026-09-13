@@ -58,11 +58,15 @@ export const PERMISSION_DEFINITIONS: Array<{
 export const ROLE_PERMISSION_MATRIX: Record<string, Permissions[]> = {
   admin: PERMISSION_DEFINITIONS.map((p) => p.slug),
   // Vendedor: fusiona venta, entrega, y ahora tambien la revision manual de la
-  // dedicatoria (antes del Verificador). Ya NO tiene orders:verify_payment:
-  // la confirmacion de pago es exclusiva del Administrador, sin excepciones
-  // ni alcance acotado (ver OrdersService.verifyPayment y HU-05 del SDD).
+  // dedicatoria (antes del Verificador). Tiene orders:verify_payment (pago
+  // PRESENCIAL en el stand es exclusivo del Vendedor), pero NO para pedidos
+  // ONLINE (esos siguen siendo exclusivos del Administrador, que es quien
+  // revisa la cuenta de Nequi/Bre-B) - el guard de permisos solo exige el
+  // permiso plano, la regla por canal se aplica explicitamente dentro de
+  // OrdersService.verifyPayment.
   seller: [
     Permissions.ORDERS_READ_PUBLIC_SAFE,
+    Permissions.ORDERS_VERIFY_PAYMENT,
     Permissions.ORDERS_UPDATE_DELIVERY,
     Permissions.MESSAGES_READ_QUEUE,
     Permissions.MESSAGES_VERIFY,

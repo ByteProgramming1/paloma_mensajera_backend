@@ -295,8 +295,32 @@ describe('OrdersService', () => {
   });
 
   describe('verifyPayment', () => {
-    it('rechaza a cualquiera que no sea admin, incluso al vendedor de la venta', async () => {
+    it('permite a un Vendedor verificar un pago PRESENCIAL', async () => {
       const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'o1',
+        status: OrderStatus.PAYMENT_PENDING,
+        salesChannel: SalesChannel.PRESENCIAL,
+      });
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await service.verifyPayment('o1', { userId: 'seller1', roleSlug: RoleSlug.SELLER }, {
+        verified: true,
+      } as never);
+
+      expect(prisma.__tx.order.update).toHaveBeenCalledWith({
+        where: { id: 'o1' },
+        data: { status: OrderStatus.PAYMENT_VERIFIED },
+      });
+    });
+
+    it('rechaza a un Vendedor que intenta verificar un pago ONLINE', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'o1',
+        status: OrderStatus.PAYMENT_PENDING,
+        salesChannel: SalesChannel.ONLINE,
+      });
       const service = new OrdersService(prisma as never, buildMailerMock() as never);
 
       await expect(
@@ -304,12 +328,50 @@ describe('OrdersService', () => {
           verified: true,
         } as never),
       ).rejects.toThrow(ForbiddenException);
-      expect(prisma.order.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('permite a un Administrador verificar un pago ONLINE', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'o1',
+        status: OrderStatus.PAYMENT_PENDING,
+        salesChannel: SalesChannel.ONLINE,
+      });
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await service.verifyPayment('o1', { userId: 'admin1', roleSlug: RoleSlug.ADMIN }, {
+        verified: true,
+      } as never);
+
+      expect(prisma.__tx.order.update).toHaveBeenCalledWith({
+        where: { id: 'o1' },
+        data: { status: OrderStatus.PAYMENT_VERIFIED },
+      });
+    });
+
+    it('rechaza a un Administrador que intenta verificar un pago PRESENCIAL', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'o1',
+        status: OrderStatus.PAYMENT_PENDING,
+        salesChannel: SalesChannel.PRESENCIAL,
+      });
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await expect(
+        service.verifyPayment('o1', { userId: 'admin1', roleSlug: RoleSlug.ADMIN }, {
+          verified: true,
+        } as never),
+      ).rejects.toThrow(ForbiddenException);
     });
 
     it('rechaza si el pedido no esta en PAYMENT_PENDING', async () => {
       const prisma = buildPrismaMock();
-      prisma.order.findUnique.mockResolvedValue({ id: 'o1', status: OrderStatus.PAYMENT_VERIFIED });
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'o1',
+        status: OrderStatus.PAYMENT_VERIFIED,
+        salesChannel: SalesChannel.ONLINE,
+      });
       const service = new OrdersService(prisma as never, buildMailerMock() as never);
 
       await expect(
@@ -321,7 +383,11 @@ describe('OrdersService', () => {
 
     it('al rechazar el pago, libera la rifa y restaura el stock del carrito', async () => {
       const prisma = buildPrismaMock();
-      prisma.order.findUnique.mockResolvedValue({ id: 'o1', status: OrderStatus.PAYMENT_PENDING });
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'o1',
+        status: OrderStatus.PAYMENT_PENDING,
+        salesChannel: SalesChannel.ONLINE,
+      });
       prisma.__tx.orderItem.findMany.mockResolvedValue([
         { id: 'i1', productId: 'p1', quantity: 2 },
       ]);
