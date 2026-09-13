@@ -86,9 +86,12 @@ export class CreateOrderDto {
   @Type(() => CartItemDto)
   cartItems: CartItemDto[];
 
+  // Opcional: en una prueba piloto hubo compradores que no querian escribir
+  // dedicatoria y el formulario no los dejaba avanzar (puede llegar vacio o
+  // ausente; el Vendedor simplemente revisa/aprueba un mensaje vacio).
+  @IsOptional()
   @IsString()
-  @MinLength(1)
-  letterContent: string;
+  letterContent?: string;
 
   @IsBoolean()
   isAnonymous: boolean;

@@ -30,6 +30,12 @@ export class CreateProductDto {
   @IsBoolean()
   isActive?: boolean;
 
+  // Si es false, el comprador debe recoger este producto el mismo en el
+  // stand: no se puede enviar a otra persona (ver Product.giftable).
+  @IsOptional()
+  @IsBoolean()
+  giftable?: boolean;
+
   // Normalmente se completa via POST /products/:id/image (ver seccion 9 del
   // SDD); se deja como string simple (no @IsUrl) para admitir tanto rutas
   // relativas de /uploads local como URLs completas de un bucket externo.

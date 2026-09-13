@@ -17,6 +17,7 @@ export enum Permissions {
   ROLES_MANAGE = 'roles:manage',
   USERS_MANAGE_TEMP = 'users:manage_temp',
   USERS_MANAGE_ROLES = 'users:manage_roles',
+  SYSTEM_DANGER_RESET = 'system:danger_reset',
 }
 
 export const PERMISSION_DEFINITIONS: Array<{
@@ -41,6 +42,7 @@ export const PERMISSION_DEFINITIONS: Array<{
   { slug: Permissions.ROLES_MANAGE, resource: 'roles', action: 'manage' },
   { slug: Permissions.USERS_MANAGE_TEMP, resource: 'users', action: 'manage_temp' },
   { slug: Permissions.USERS_MANAGE_ROLES, resource: 'users', action: 'manage_roles' },
+  { slug: Permissions.SYSTEM_DANGER_RESET, resource: 'system', action: 'danger_reset' },
 ];
 
 // admin siempre recibe todos los permisos (ver 5.1 nota de visibilidad total del admin)
