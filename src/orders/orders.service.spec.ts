@@ -34,7 +34,10 @@ function buildPrismaMock(overrides: Record<string, unknown> = {}) {
       findMany: jest.fn(),
     },
     user: { findUnique: jest.fn() },
-    product: { count: jest.fn().mockResolvedValue(0) },
+    product: {
+      count: jest.fn().mockResolvedValue(0),
+      findMany: jest.fn().mockResolvedValue([{ id: 'p1', price: 1000 }]),
+    },
     deliveryAssignment: { findFirst: jest.fn() },
     $transaction: jest.fn(async (callback: (tx: Tx) => unknown) => callback(tx)),
     __tx: tx,
@@ -96,6 +99,33 @@ describe('OrdersService', () => {
         'otro@escuelaing.edu.co',
       );
       expect(createArgs.data.deliveryDetail.create.deliveryNotes).toBeNull();
+    });
+
+    it('calcula unitPrice/totalAmount con el precio vigente al crear el pedido, no en 0', async () => {
+      const prisma = buildPrismaMock();
+      prisma.product.findMany.mockResolvedValue([{ id: 'p1', price: 2500 }]);
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await service.createPublicOrder({
+        ...baseDto,
+        cartItems: [{ productId: 'p1', quantity: 3 }],
+        selfPickup: true,
+      } as never);
+
+      const createArgs = prisma.order.create.mock.calls[0][0];
+      expect(createArgs.data.totalAmount).toBe(7500);
+      expect(createArgs.data.items.create[0].unitPrice).toBe(2500);
+    });
+
+    it('rechaza si algun producto del carrito no existe', async () => {
+      const prisma = buildPrismaMock();
+      prisma.product.findMany.mockResolvedValue([]);
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await expect(
+        service.createPublicOrder({ ...baseDto, selfPickup: true } as never),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.order.create).not.toHaveBeenCalled();
     });
 
     it('rechaza si selfPickup es false y algun item es de un producto no-giftable', async () => {
