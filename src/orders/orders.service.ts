@@ -48,6 +48,7 @@ export class OrdersService {
   // por revision 100% manual del Vendedor. No se toca stock ni rifa todavia.
   async createPublicOrder(dto: CreateOrderDto) {
     await this.assertValidAddOnSelections(dto.cartItems);
+    await this.assertGiftableIfNotSelfPickup(dto);
     const orderSequence = (await this.prisma.order.count()) + 1;
 
     // Autorrecogida (seccion 3.1): si el comprador recoge su propio regalo,
@@ -83,7 +84,7 @@ export class OrdersService {
             buyerCareerOrArea: dto.buyerCareerOrArea,
             selfPickup: dto.selfPickup,
             deliveryNotes: dto.selfPickup ? (dto.deliveryNotes ?? null) : null,
-            letterContent: dto.letterContent,
+            letterContent: dto.letterContent ?? '',
             isAnonymous: dto.isAnonymous,
             ...recipientData,
           },
@@ -476,6 +477,27 @@ export class OrdersService {
           `La opcion de acompañante seleccionada no es valida para el producto '${item.productId}'.`,
         );
       }
+    }
+  }
+
+  // Regla de negocio: un producto no-giftable (ej. la paleta sola) no se
+  // puede enviar a otra persona - si el pedido no es autorrecogida, ningun
+  // item del carrito puede ser de un producto con giftable=false. El front
+  // ya fuerza selfPickup=true en ese caso, pero se valida igual aca por si
+  // alguien llama la API directamente.
+  private async assertGiftableIfNotSelfPickup(dto: CreateOrderDto) {
+    if (dto.selfPickup) {
+      return;
+    }
+
+    const productIds = [...new Set(dto.cartItems.map((item) => item.productId))];
+    const nonGiftableCount = await this.prisma.product.count({
+      where: { id: { in: productIds }, giftable: false },
+    });
+    if (nonGiftableCount > 0) {
+      throw new BadRequestException(
+        'Este pedido incluye un producto que solo se puede recoger en el stand, no se puede enviar a otra persona.',
+      );
     }
   }
 

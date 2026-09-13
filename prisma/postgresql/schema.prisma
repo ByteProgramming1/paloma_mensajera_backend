@@ -125,6 +125,10 @@ model Product {
   // nunca un blob binario en esta tabla. Ver ImageStorageService.
   imageUrl String?
   isActive Boolean     @default(true)
+  // Si es false, el comprador debe recoger este producto el mismo en el
+  // stand: no puede enviarse a otra persona (ej. la paleta vendida sola,
+  // sin ser acompañante de un combo con destinatario distinto).
+  giftable Boolean     @default(true)
   items    OrderItem[]
 
   // Acompañantes opcionales del producto (ej. "Elige tu carta"): un producto

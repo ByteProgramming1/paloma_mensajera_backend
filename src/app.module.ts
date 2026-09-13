@@ -15,6 +15,7 @@ import { SettingsModule } from './settings/settings.module';
 import { OrdersModule } from './orders/orders.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { UsersModule } from './users/users.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { UsersModule } from './users/users.module';
     OrdersModule,
     MetricsModule,
     UsersModule,
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

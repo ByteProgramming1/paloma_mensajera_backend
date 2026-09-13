@@ -34,6 +34,7 @@ function buildPrismaMock(overrides: Record<string, unknown> = {}) {
       findMany: jest.fn(),
     },
     user: { findUnique: jest.fn() },
+    product: { count: jest.fn().mockResolvedValue(0) },
     deliveryAssignment: { findFirst: jest.fn() },
     $transaction: jest.fn(async (callback: (tx: Tx) => unknown) => callback(tx)),
     __tx: tx,
@@ -95,6 +96,23 @@ describe('OrdersService', () => {
         'otro@escuelaing.edu.co',
       );
       expect(createArgs.data.deliveryDetail.create.deliveryNotes).toBeNull();
+    });
+
+    it('rechaza si selfPickup es false y algun item es de un producto no-giftable', async () => {
+      const prisma = buildPrismaMock();
+      prisma.product.count.mockResolvedValue(1);
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await expect(
+        service.createPublicOrder({
+          ...baseDto,
+          selfPickup: false,
+          recipientFullName: 'Otro Destino',
+          recipientCareerOrArea: 'Administracion',
+          recipientTeamsUser: 'otro@escuelaing.edu.co',
+        } as never),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.order.create).not.toHaveBeenCalled();
     });
   });
 

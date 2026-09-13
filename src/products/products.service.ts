@@ -13,7 +13,7 @@ export class ProductsService {
 
   create(dto: CreateProductDto) {
     return this.prisma.product.create({
-      data: { ...dto, isActive: dto.isActive ?? true },
+      data: { ...dto, isActive: dto.isActive ?? true, giftable: dto.giftable ?? true },
     });
   }
 
