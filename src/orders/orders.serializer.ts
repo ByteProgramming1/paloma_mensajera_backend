@@ -28,6 +28,10 @@ function baseOrderFields(order: OrderWithRelations) {
     totalAmount: order.totalAmount,
     salesChannel: order.salesChannel,
     createdAt: order.createdAt,
+    // Vincula este pedido con los demas destinatarios del mismo checkout
+    // multi-destinatario (ver Order.groupId) - null para una compra normal
+    // de un solo destinatario. Puramente informativo para admin/vendedor.
+    groupId: order.groupId,
     raffleNumber: order.raffleNumber ? order.raffleNumber.number : null,
     items: order.items.map((item) => ({
       productId: item.productId,
@@ -110,6 +114,7 @@ export function serializeOrderMessageView(order: OrderWithRelations) {
   return {
     orderId: order.id,
     orderCode: order.orderCode,
+    groupId: order.groupId,
     buyerFullName: order.deliveryDetail?.buyerFullName,
     recipientFullName: order.deliveryDetail?.recipientFullName,
     letterContent: order.deliveryDetail?.letterContent,

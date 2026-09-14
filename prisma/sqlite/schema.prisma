@@ -229,6 +229,15 @@ model Order {
   assistedBySellerId String?
   createdAt          DateTime @default(now())
 
+  // Vincula varios pedidos creados en un mismo checkout multi-destinatario
+  // (ver POST /orders/public/multi): cada destinatario sigue siendo su propio
+  // Order (dedicatoria, revision de mensaje y entrega 100% independientes),
+  // pero comparten groupId para que el pago se verifique como una sola accion
+  // todo-o-nada (ver PATCH /orders/groups/:groupId/verify-payment) y el admin
+  // pueda ver que estan relacionados. Nulo para una compra de un solo
+  // destinatario (POST /orders/public), que sigue sin ningun concepto de grupo.
+  groupId String?
+
   items               OrderItem[]
   deliveryDetail      DeliveryDetail?
   messageReview       MessageReview?
@@ -237,6 +246,7 @@ model Order {
   deliveryAssignments DeliveryAssignment[]
   drawRounds          DrawRound[]
 
+  @@index([groupId])
   @@map("orders")
 }
 
