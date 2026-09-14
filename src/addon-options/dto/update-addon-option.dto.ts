@@ -1,4 +1,12 @@
-import { IsBoolean, IsInt, IsOptional, IsString, IsUUID, MinLength, ValidateIf } from 'class-validator';
+import {
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MinLength,
+  ValidateIf,
+} from 'class-validator';
 
 export class UpdateAddOnOptionDto {
   @IsOptional()
