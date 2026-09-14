@@ -1,4 +1,4 @@
-import { IsBoolean, IsOptional, IsString, IsUUID, MinLength, ValidateIf } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, IsUUID, MinLength, ValidateIf } from 'class-validator';
 
 export class UpdateAddOnOptionDto {
   @IsOptional()
@@ -16,4 +16,11 @@ export class UpdateAddOnOptionDto {
   @ValidateIf((_, value) => value !== null)
   @IsUUID()
   linkedProductId?: string | null;
+
+  // Reordenamiento manual excepcional (ver AddOnGroup.position): normalmente
+  // se asigna solo, pero esto permite corregir el orden de opciones que ya
+  // existian antes de que esta columna existiera.
+  @IsOptional()
+  @IsInt()
+  position?: number;
 }
