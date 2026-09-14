@@ -16,10 +16,12 @@ import { AuthenticatedUser } from '../common/interfaces/authenticated-user.inter
 import { OrdersService } from './orders.service';
 import { TeamsNotificationService } from '../notifications/teams-notification.service';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { CreateMultiOrderDto } from './dto/create-multi-order.dto';
 import { VerifyMessageDto } from './dto/verify-message.dto';
 import { SelectRaffleNumberDto } from './dto/select-raffle-number.dto';
 import { VerifyPaymentDto } from './dto/verify-payment.dto';
 import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
+import { ResubmitMessageDto } from './dto/resubmit-message.dto';
 import { FindOrdersQueryDto } from './dto/find-orders.query.dto';
 import { FindMyDeliveriesQueryDto } from './dto/find-my-deliveries.query.dto';
 
@@ -38,6 +40,17 @@ export class OrdersController {
   @Post('public')
   createPublicOrder(@Body() dto: CreateOrderDto) {
     return this.ordersService.createPublicOrder(dto);
+  }
+
+  // Checkout con varios destinatarios en una sola compra (ver Order.groupId):
+  // cada elemento de dto.recipients se convierte en su propio pedido, con
+  // dedicatoria/revision/entrega independientes - solo el pago se verifica
+  // en conjunto, ver PATCH /orders/groups/:groupId/verify-payment.
+  @RequirePermissions(Permissions.ORDERS_CREATE_PUBLIC)
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @Post('public/multi')
+  createPublicOrdersMulti(@Body() dto: CreateMultiOrderDto) {
+    return this.ordersService.createPublicOrdersMulti(dto);
   }
 
   // A pesar del nombre (se conserva la ruta para no romper el frontend), ya
@@ -120,6 +133,32 @@ export class OrdersController {
     @Body() dto: VerifyPaymentDto,
   ) {
     return this.ordersService.verifyPayment(id, user, dto);
+  }
+
+  // Verifica/rechaza de una sola vez el pago de TODOS los pedidos de un
+  // checkout multi-destinatario (todo o nada, ver Order.groupId) - el
+  // endpoint individual de arriba sigue existiendo para pedidos sin grupo.
+  @RequirePermissions(Permissions.ORDERS_VERIFY_PAYMENT)
+  @Patch('groups/:groupId/verify-payment')
+  verifyPaymentGroup(
+    @Param('groupId') groupId: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: VerifyPaymentDto,
+  ) {
+    return this.ordersService.verifyPaymentGroup(groupId, user, dto);
+  }
+
+  // El comprador corrige letterContent/isAnonymous de su propio pedido
+  // cuando la dedicatoria fue rechazada (MESSAGE_REJECTED) y la reenvia, sin
+  // crear un pedido nuevo.
+  @RequirePermissions(Permissions.ORDERS_CREATE_PUBLIC)
+  @Patch(':id/resubmit-message')
+  resubmitMessage(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: ResubmitMessageDto,
+  ) {
+    return this.ordersService.resubmitMessage(id, user, dto);
   }
 
   // Cualquier vendedor puede tomar y marcar cualquier entrega pendiente, sin

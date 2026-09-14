@@ -5,16 +5,19 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { Prisma } from '../../prisma/postgresql/generated';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailerService } from '../mailer/mailer.service';
 import { Permissions } from '../common/enums/permissions';
 import { AuthenticatedUser } from '../common/interfaces/authenticated-user.interface';
 import { CartItemDto, CreateOrderDto } from './dto/create-order.dto';
+import { CreateMultiOrderDto } from './dto/create-multi-order.dto';
 import { VerifyMessageDto } from './dto/verify-message.dto';
 import { SelectRaffleNumberDto } from './dto/select-raffle-number.dto';
 import { VerifyPaymentDto } from './dto/verify-payment.dto';
 import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
+import { ResubmitMessageDto } from './dto/resubmit-message.dto';
 import { buildOrderCode } from './order-code.util';
 import {
   DeliveryAssignmentStatus,
@@ -37,6 +40,25 @@ interface ActingUser {
   roleSlug: string;
 }
 
+interface OrderBuyerInput {
+  buyerFullName: string;
+  buyerEmail: string;
+  buyerPhone: string;
+  buyerType: string;
+  buyerCareerOrArea: string;
+}
+
+interface OrderRecipientInput {
+  selfPickup: boolean;
+  recipientFullName?: string;
+  recipientCareerOrArea?: string;
+  recipientTeamsUser?: string;
+  deliveryNotes?: string;
+  cartItems: CartItemDto[];
+  letterContent?: string;
+  isAnonymous: boolean;
+}
+
 @Injectable()
 export class OrdersService {
   constructor(
@@ -54,7 +76,6 @@ export class OrdersService {
     await this.assertValidAddOnSelections(dto.cartItems);
     await this.assertGiftableIfNotSelfPickup(dto);
     const orderSequence = (await this.prisma.order.count()) + 1;
-    const hasLetterContent = !!dto.letterContent?.trim();
 
     // Snapshot del precio vigente al armar el carrito (seccion 10.2 del SDD):
     // el comprador ya conoce el precio desde este momento, no hace falta
@@ -62,7 +83,79 @@ export class OrdersService {
     // solo para el descuento de stock, que si se difiere hasta que la
     // dedicatoria este aprobada.
     const unitPrices = await this.resolveUnitPrices(dto.cartItems);
-    const totalAmount = dto.cartItems.reduce(
+
+    return this.prisma.order.create({
+      data: this.buildOrderCreateInput({
+        orderCode: buildOrderCode(orderSequence),
+        salesChannel: dto.salesChannel,
+        assistedBySellerId: dto.assistedBySellerId,
+        buyer: dto,
+        recipient: dto,
+        unitPrices,
+      }),
+    });
+  }
+
+  // Un solo checkout que crea un pedido por cada destinatario (ver seccion
+  // "compra multi-destinatario"): cada destinatario sigue teniendo su propia
+  // dedicatoria, revision de mensaje y entrega, 100% independientes entre si
+  // (misma logica que createPublicOrder, una vez por destinatario) - solo
+  // comparten groupId, comprador y canal de venta. La rifa tampoco cambia:
+  // se sigue eligiendo por pedido individual via selectRaffleNumber, una vez
+  // que ESE pedido tenga su dedicatoria aprobada.
+  // Todo o nada: si un producto no existe o un destinatario no pasa alguna
+  // validacion, no se crea ningun pedido del grupo (una sola $transaction).
+  async createPublicOrdersMulti(dto: CreateMultiOrderDto) {
+    for (const recipient of dto.recipients) {
+      await this.assertValidAddOnSelections(recipient.cartItems);
+      await this.assertGiftableIfNotSelfPickup(recipient);
+    }
+
+    const allCartItems = dto.recipients.flatMap((recipient) => recipient.cartItems);
+    const unitPrices = await this.resolveUnitPrices(allCartItems);
+    const groupId = randomUUID();
+
+    const orders = await this.prisma.$transaction(async (tx) => {
+      const baseSequence = await tx.order.count();
+      const created = [];
+      for (let index = 0; index < dto.recipients.length; index += 1) {
+        const order = await tx.order.create({
+          data: this.buildOrderCreateInput({
+            orderCode: buildOrderCode(baseSequence + index + 1),
+            salesChannel: dto.salesChannel,
+            assistedBySellerId: dto.assistedBySellerId,
+            groupId,
+            buyer: dto,
+            recipient: dto.recipients[index],
+            unitPrices,
+          }),
+        });
+        created.push(order);
+      }
+      return created;
+    });
+
+    return { groupId, orders };
+  }
+
+  // Arma el Prisma.OrderCreateInput compartido por createPublicOrder (un solo
+  // destinatario) y createPublicOrdersMulti (uno por destinatario): ambos
+  // difieren solo en quien juega el rol de "buyer" (datos de comprador,
+  // compartidos en el checkout multi) y "recipient" (datos propios de ESE
+  // pedido - carrito, dedicatoria, autorrecogida).
+  private buildOrderCreateInput(params: {
+    orderCode: string;
+    salesChannel: SalesChannel;
+    assistedBySellerId?: string | null;
+    groupId?: string | null;
+    buyer: OrderBuyerInput;
+    recipient: OrderRecipientInput;
+    unitPrices: Map<string, number>;
+  }): Prisma.OrderCreateInput {
+    const { orderCode, salesChannel, assistedBySellerId, groupId, buyer, recipient, unitPrices } =
+      params;
+    const hasLetterContent = !!recipient.letterContent?.trim();
+    const totalAmount = recipient.cartItems.reduce(
       (sum, item) => sum + unitPrices.get(item.productId)! * item.quantity,
       0,
     );
@@ -73,60 +166,57 @@ export class OrdersService {
     // existe para el destinatario en 3.1), asi que se usa su correo
     // institucional: en Microsoft Teams/365 el UPN (correo) es el identificador
     // de usuario, por lo que sirve igual para notificarlo por Teams.
-    const recipientData = dto.selfPickup
+    const recipientData = recipient.selfPickup
       ? {
-          recipientFullName: dto.buyerFullName,
-          recipientCareerOrArea: dto.buyerCareerOrArea,
-          recipientTeamsUser: dto.buyerEmail,
+          recipientFullName: buyer.buyerFullName,
+          recipientCareerOrArea: buyer.buyerCareerOrArea,
+          recipientTeamsUser: buyer.buyerEmail,
         }
       : {
-          recipientFullName: dto.recipientFullName!,
-          recipientCareerOrArea: dto.recipientCareerOrArea,
-          recipientTeamsUser: dto.recipientTeamsUser!,
+          recipientFullName: recipient.recipientFullName!,
+          recipientCareerOrArea: recipient.recipientCareerOrArea,
+          recipientTeamsUser: recipient.recipientTeamsUser!,
         };
 
-    return this.prisma.order.create({
-      data: {
-        orderCode: buildOrderCode(orderSequence),
-        status: hasLetterContent
-          ? OrderStatus.MESSAGE_PENDING_REVIEW
-          : OrderStatus.MESSAGE_APPROVED,
-        totalAmount,
-        salesChannel: dto.salesChannel,
-        assistedBySellerId: dto.assistedBySellerId ?? null,
-        deliveryDetail: {
-          create: {
-            buyerFullName: dto.buyerFullName,
-            buyerEmail: dto.buyerEmail,
-            buyerPhone: dto.buyerPhone,
-            buyerType: dto.buyerType,
-            buyerCareerOrArea: dto.buyerCareerOrArea,
-            selfPickup: dto.selfPickup,
-            deliveryNotes: dto.selfPickup ? (dto.deliveryNotes ?? null) : null,
-            letterContent: dto.letterContent ?? '',
-            isAnonymous: dto.isAnonymous,
-            ...recipientData,
-          },
-        },
-        items: {
-          create: dto.cartItems.map((item) => ({
-            productId: item.productId,
-            quantity: item.quantity,
-            unitPrice: unitPrices.get(item.productId)!,
-            selectedAddOnOptionId: item.selectedAddOnOptionId ?? null,
-          })),
-        },
-        // Sin dedicatoria, se marca como aprobado de una vez (sin revisor
-        // humano) para que las pantallas que leen messageReview.humanReviewStatus
-        // (ej. admin/orders-page) no muestren un pedido MESSAGE_APPROVED con
-        // un estado PENDING inconsistente.
-        messageReview: {
-          create: hasLetterContent
-            ? { humanReviewStatus: HumanReviewStatus.PENDING }
-            : { humanReviewStatus: HumanReviewStatus.APPROVED, reviewedAt: new Date() },
+    return {
+      orderCode,
+      status: hasLetterContent ? OrderStatus.MESSAGE_PENDING_REVIEW : OrderStatus.MESSAGE_APPROVED,
+      totalAmount,
+      salesChannel,
+      assistedBySellerId: assistedBySellerId ?? null,
+      groupId: groupId ?? null,
+      deliveryDetail: {
+        create: {
+          buyerFullName: buyer.buyerFullName,
+          buyerEmail: buyer.buyerEmail,
+          buyerPhone: buyer.buyerPhone,
+          buyerType: buyer.buyerType,
+          buyerCareerOrArea: buyer.buyerCareerOrArea,
+          selfPickup: recipient.selfPickup,
+          deliveryNotes: recipient.selfPickup ? (recipient.deliveryNotes ?? null) : null,
+          letterContent: recipient.letterContent ?? '',
+          isAnonymous: recipient.isAnonymous,
+          ...recipientData,
         },
       },
-    });
+      items: {
+        create: recipient.cartItems.map((item) => ({
+          productId: item.productId,
+          quantity: item.quantity,
+          unitPrice: unitPrices.get(item.productId)!,
+          selectedAddOnOptionId: item.selectedAddOnOptionId ?? null,
+        })),
+      },
+      // Sin dedicatoria, se marca como aprobado de una vez (sin revisor
+      // humano) para que las pantallas que leen messageReview.humanReviewStatus
+      // (ej. admin/orders-page) no muestren un pedido MESSAGE_APPROVED con
+      // un estado PENDING inconsistente.
+      messageReview: {
+        create: hasLetterContent
+          ? { humanReviewStatus: HumanReviewStatus.PENDING }
+          : { humanReviewStatus: HumanReviewStatus.APPROVED, reviewedAt: new Date() },
+      },
+    };
   }
 
   // Revision manual de la dedicatoria - normalmente el Vendedor, quien puede
@@ -175,6 +265,59 @@ export class OrdersService {
     }
 
     return messageReview;
+  }
+
+  // Permite al comprador corregir letterContent/isAnonymous de su propio
+  // pedido cuando la dedicatoria fue rechazada y reenviarla, en vez de tener
+  // que crear un pedido nuevo (que antes era lo unico que ofrecia el boton
+  // "editar y volver a enviar" del front, sin corregir realmente el pedido
+  // existente). Mismo chequeo de dueño que findOneForUser: buyerEmail del
+  // pedido contra el email del JWT, ya que Order no tiene un buyerId real.
+  async resubmitMessage(orderId: string, actingUser: AuthenticatedUser, dto: ResubmitMessageDto) {
+    const order = await this.findOrderOrThrow(orderId);
+
+    const buyerEmail = order.deliveryDetail?.buyerEmail?.toLowerCase();
+    if (!buyerEmail || buyerEmail !== actingUser.email.toLowerCase()) {
+      throw new ForbiddenException('Este pedido no te pertenece.');
+    }
+    if (order.status !== OrderStatus.MESSAGE_REJECTED) {
+      throw new BadRequestException(
+        'Solo se puede reenviar la dedicatoria de un pedido cuyo mensaje fue rechazado.',
+      );
+    }
+
+    // Mismo criterio que createPublicOrder: sin dedicatoria, se aprueba de
+    // una vez sin pasar de nuevo por la cola del Vendedor.
+    const hasLetterContent = !!dto.letterContent?.trim();
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.deliveryDetail.update({
+        where: { orderId },
+        data: {
+          letterContent: dto.letterContent ?? '',
+          isAnonymous: dto.isAnonymous,
+        },
+      });
+      await tx.order.update({
+        where: { id: orderId },
+        data: {
+          status: hasLetterContent
+            ? OrderStatus.MESSAGE_PENDING_REVIEW
+            : OrderStatus.MESSAGE_APPROVED,
+        },
+      });
+      return tx.messageReview.update({
+        where: { orderId },
+        data: {
+          humanReviewStatus: hasLetterContent
+            ? HumanReviewStatus.PENDING
+            : HumanReviewStatus.APPROVED,
+          rejectionReason: null,
+          reviewedByUserId: null,
+          reviewedAt: hasLetterContent ? null : new Date(),
+        },
+      });
+    });
   }
 
   // Solo con MESSAGE_APPROVED - descuenta stock del carrito, asigna el numero
@@ -244,7 +387,48 @@ export class OrdersService {
   // stand) es exclusivo del Vendedor, el Administrador no tiene alcance ahi.
   async verifyPayment(orderId: string, actingUser: ActingUser, dto: VerifyPaymentDto) {
     const order = await this.findOrderOrThrow(orderId);
+    this.assertCanVerifyPayment(order, actingUser);
 
+    return this.prisma.$transaction((tx) =>
+      this.applyPaymentVerificationTx(tx, orderId, actingUser, dto),
+    );
+  }
+
+  // Verifica/rechaza el pago de TODOS los pedidos de un checkout
+  // multi-destinatario a la vez (todo o nada, ver Order.groupId): el pago se
+  // hizo una sola vez por el total combinado, asi que no tendria sentido
+  // aprobar el pago de un destinatario y rechazar el de otro. La regla de
+  // canal/rol se valida para cada pedido del grupo ANTES de mutar cualquiera
+  // (todos comparten salesChannel, vienen del mismo checkout), y las
+  // mutaciones en si corren dentro de una unica $transaction para que sean
+  // atomicas de verdad.
+  async verifyPaymentGroup(groupId: string, actingUser: ActingUser, dto: VerifyPaymentDto) {
+    const orders = await this.prisma.order.findMany({ where: { groupId } });
+    if (orders.length === 0) {
+      throw new NotFoundException(`Grupo de pedidos '${groupId}' no encontrado.`);
+    }
+    for (const order of orders) {
+      this.assertCanVerifyPayment(order, actingUser);
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const order of orders) {
+        await this.applyPaymentVerificationTx(tx, order.id, actingUser, dto);
+      }
+    });
+
+    const updatedOrders = await this.prisma.order.findMany({
+      ...ORDER_WITH_RELATIONS,
+      where: { groupId },
+      orderBy: { createdAt: 'asc' },
+    });
+    return { groupId, orders: updatedOrders.map(serializeOrderFull) };
+  }
+
+  private assertCanVerifyPayment(
+    order: { salesChannel: string; status: string },
+    actingUser: ActingUser,
+  ) {
     if (order.salesChannel === SalesChannel.ONLINE && actingUser.roleSlug !== RoleSlug.ADMIN) {
       throw new ForbiddenException(
         'Solo el Administrador puede confirmar o rechazar un pago en linea (Nequi/Bre-B).',
@@ -255,58 +439,62 @@ export class OrdersService {
         'Ese pago presencial debe confirmarlo un Vendedor en el stand, no el Administrador.',
       );
     }
-
     if (order.status !== OrderStatus.PAYMENT_PENDING) {
       throw new BadRequestException('Este pedido ya fue verificado.');
     }
+  }
 
-    return this.prisma.$transaction(async (tx) => {
-      if (dto.verified) {
-        await tx.order.update({
-          where: { id: orderId },
-          data: { status: OrderStatus.PAYMENT_VERIFIED },
+  private async applyPaymentVerificationTx(
+    tx: Prisma.TransactionClient,
+    orderId: string,
+    actingUser: ActingUser,
+    dto: VerifyPaymentDto,
+  ) {
+    if (dto.verified) {
+      await tx.order.update({
+        where: { id: orderId },
+        data: { status: OrderStatus.PAYMENT_VERIFIED },
+      });
+    } else {
+      await tx.order.update({
+        where: { id: orderId },
+        data: { status: OrderStatus.PAYMENT_REJECTED },
+      });
+      await tx.raffleNumber.updateMany({
+        where: { orderId },
+        data: { status: RaffleNumberStatus.AVAILABLE, orderId: null },
+      });
+      const items = await tx.orderItem.findMany({
+        where: { orderId },
+        include: { selectedAddOnOption: true },
+      });
+      for (const item of items) {
+        await tx.product.update({
+          where: { id: item.productId },
+          data: { stock: { increment: item.quantity } },
         });
-      } else {
-        await tx.order.update({
-          where: { id: orderId },
-          data: { status: OrderStatus.PAYMENT_REJECTED },
-        });
-        await tx.raffleNumber.updateMany({
-          where: { orderId },
-          data: { status: RaffleNumberStatus.AVAILABLE, orderId: null },
-        });
-        const items = await tx.orderItem.findMany({
-          where: { orderId },
-          include: { selectedAddOnOption: true },
-        });
-        for (const item of items) {
+
+        // Simetrico al descuento en selectRaffleNumber: si el acompañante
+        // elegido tenia un producto vendible enlazado, tambien se le
+        // restaura el stock.
+        const linkedProductId = item.selectedAddOnOption?.linkedProductId;
+        if (linkedProductId) {
           await tx.product.update({
-            where: { id: item.productId },
+            where: { id: linkedProductId },
             data: { stock: { increment: item.quantity } },
           });
-
-          // Simetrico al descuento en selectRaffleNumber: si el acompañante
-          // elegido tenia un producto vendible enlazado, tambien se le
-          // restaura el stock.
-          const linkedProductId = item.selectedAddOnOption?.linkedProductId;
-          if (linkedProductId) {
-            await tx.product.update({
-              where: { id: linkedProductId },
-              data: { stock: { increment: item.quantity } },
-            });
-          }
         }
       }
+    }
 
-      return tx.paymentTransaction.update({
-        where: { orderId },
-        data: {
-          verified: dto.verified,
-          verifiedByAdminId: actingUser.userId,
-          verifiedAt: new Date(),
-          verificationNotes: dto.verificationNotes,
-        },
-      });
+    return tx.paymentTransaction.update({
+      where: { orderId },
+      data: {
+        verified: dto.verified,
+        verifiedByAdminId: actingUser.userId,
+        verifiedAt: new Date(),
+        verificationNotes: dto.verificationNotes,
+      },
     });
   }
 
@@ -542,12 +730,15 @@ export class OrdersService {
   // esta misma regla (hasPickupOnlyItem = true solo si todas las lineas son
   // giftable=false), pero se valida igual aca por si alguien llama la API
   // directamente.
-  private async assertGiftableIfNotSelfPickup(dto: CreateOrderDto) {
-    if (dto.selfPickup) {
+  private async assertGiftableIfNotSelfPickup(recipient: {
+    selfPickup: boolean;
+    cartItems: CartItemDto[];
+  }) {
+    if (recipient.selfPickup) {
       return;
     }
 
-    const productIds = [...new Set(dto.cartItems.map((item) => item.productId))];
+    const productIds = [...new Set(recipient.cartItems.map((item) => item.productId))];
     const giftableCount = await this.prisma.product.count({
       where: { id: { in: productIds }, giftable: true },
     });

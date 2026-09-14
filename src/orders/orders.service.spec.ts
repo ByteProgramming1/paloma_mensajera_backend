@@ -1,4 +1,9 @@
-import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import {
   BuyerType,
@@ -14,14 +19,21 @@ function buildMailerMock() {
 
 function buildPrismaMock(overrides: Record<string, unknown> = {}) {
   const tx = {
-    order: { update: jest.fn(), findUniqueOrThrow: jest.fn() },
+    order: {
+      update: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
+      create: jest
+        .fn()
+        .mockImplementation(({ data }) => Promise.resolve({ id: 'new-order', ...data })),
+    },
     orderItem: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn() },
     product: { findUnique: jest.fn(), update: jest.fn() },
     raffleNumber: { updateMany: jest.fn(), update: jest.fn() },
     paymentTransaction: { create: jest.fn(), update: jest.fn() },
     messageReview: { update: jest.fn() },
     deliveryAssignment: { create: jest.fn(), update: jest.fn(), findFirst: jest.fn() },
-    deliveryDetail: { findUnique: jest.fn() },
+    deliveryDetail: { findUnique: jest.fn(), update: jest.fn() },
   };
 
   type Tx = typeof tx;
@@ -205,6 +217,78 @@ describe('OrdersService', () => {
     });
   });
 
+  describe('createPublicOrdersMulti', () => {
+    const baseMultiDto = {
+      buyerFullName: 'Ana Compradora',
+      buyerEmail: 'ana@escuelaing.edu.co',
+      buyerPhone: '3001234567',
+      buyerType: BuyerType.ESTUDIANTE,
+      buyerCareerOrArea: 'Ingenieria de Sistemas',
+      salesChannel: SalesChannel.ONLINE,
+    };
+
+    it('crea un pedido por cada destinatario, todos con el mismo groupId', async () => {
+      const prisma = buildPrismaMock();
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      const result = await service.createPublicOrdersMulti({
+        ...baseMultiDto,
+        recipients: [
+          {
+            selfPickup: true,
+            cartItems: [{ productId: 'p1', quantity: 1 }],
+            letterContent: 'Para el destinatario 1',
+            isAnonymous: false,
+          },
+          {
+            selfPickup: true,
+            cartItems: [{ productId: 'p1', quantity: 2 }],
+            letterContent: 'Para el destinatario 2',
+            isAnonymous: false,
+          },
+        ],
+      } as never);
+
+      expect(prisma.__tx.order.create).toHaveBeenCalledTimes(2);
+      const [firstCall, secondCall] = prisma.__tx.order.create.mock.calls;
+      expect(firstCall[0].data.groupId).toBe(result.groupId);
+      expect(secondCall[0].data.groupId).toBe(result.groupId);
+      expect(firstCall[0].data.orderCode).not.toBe(secondCall[0].data.orderCode);
+      expect(result.orders).toHaveLength(2);
+    });
+
+    it('no crea ningun pedido si un destinatario no pasa las validaciones (todo o nada)', async () => {
+      const prisma = buildPrismaMock();
+      // giftableCount por defecto es 0: cualquier destinatario con selfPickup
+      // false y sin mockear product.count queda como "todo el carrito no-giftable".
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await expect(
+        service.createPublicOrdersMulti({
+          ...baseMultiDto,
+          recipients: [
+            {
+              selfPickup: true,
+              cartItems: [{ productId: 'p1', quantity: 1 }],
+              isAnonymous: false,
+            },
+            {
+              selfPickup: false,
+              recipientFullName: 'Otro Destino',
+              recipientCareerOrArea: 'Administracion',
+              recipientTeamsUser: 'otro@escuelaing.edu.co',
+              cartItems: [{ productId: 'p1', quantity: 1 }],
+              isAnonymous: false,
+            },
+          ],
+        } as never),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(prisma.__tx.order.create).not.toHaveBeenCalled();
+    });
+  });
+
   describe('verifyMessage', () => {
     it('rechaza si el pedido no esta pendiente de revision', async () => {
       const prisma = buildPrismaMock();
@@ -260,6 +344,97 @@ describe('OrdersService', () => {
         where: { id: 'o1' },
         data: { status: OrderStatus.MESSAGE_APPROVED },
       });
+    });
+  });
+
+  describe('resubmitMessage', () => {
+    it('rechaza si el pedido no le pertenece al comprador autenticado', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'o1',
+        status: OrderStatus.MESSAGE_REJECTED,
+        deliveryDetail: { buyerEmail: 'ana@escuelaing.edu.co' },
+      });
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await expect(
+        service.resubmitMessage(
+          'o1',
+          { email: 'otro@escuelaing.edu.co' } as never,
+          { letterContent: 'Corregido', isAnonymous: false } as never,
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('rechaza si el pedido no esta en MESSAGE_REJECTED', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'o1',
+        status: OrderStatus.MESSAGE_PENDING_REVIEW,
+        deliveryDetail: { buyerEmail: 'ana@escuelaing.edu.co' },
+      });
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await expect(
+        service.resubmitMessage(
+          'o1',
+          { email: 'ana@escuelaing.edu.co' } as never,
+          { letterContent: 'Corregido', isAnonymous: false } as never,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('reenvia la dedicatoria corregida y limpia el rechazo, vuelve a MESSAGE_PENDING_REVIEW', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'o1',
+        status: OrderStatus.MESSAGE_REJECTED,
+        deliveryDetail: { buyerEmail: 'ana@escuelaing.edu.co' },
+      });
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await service.resubmitMessage(
+        'o1',
+        { email: 'ana@escuelaing.edu.co' } as never,
+        { letterContent: 'Dedicatoria corregida', isAnonymous: true } as never,
+      );
+
+      expect(prisma.__tx.deliveryDetail.update).toHaveBeenCalledWith({
+        where: { orderId: 'o1' },
+        data: { letterContent: 'Dedicatoria corregida', isAnonymous: true },
+      });
+      expect(prisma.__tx.order.update).toHaveBeenCalledWith({
+        where: { id: 'o1' },
+        data: { status: OrderStatus.MESSAGE_PENDING_REVIEW },
+      });
+      const reviewUpdate = prisma.__tx.messageReview.update.mock.calls[0][0];
+      expect(reviewUpdate.data.humanReviewStatus).toBe(HumanReviewStatus.PENDING);
+      expect(reviewUpdate.data.rejectionReason).toBeNull();
+      expect(reviewUpdate.data.reviewedByUserId).toBeNull();
+    });
+
+    it('si la dedicatoria corregida queda vacia, aprueba directo sin pasar por revision', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'o1',
+        status: OrderStatus.MESSAGE_REJECTED,
+        deliveryDetail: { buyerEmail: 'ana@escuelaing.edu.co' },
+      });
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await service.resubmitMessage(
+        'o1',
+        { email: 'ana@escuelaing.edu.co' } as never,
+        { letterContent: '   ', isAnonymous: false } as never,
+      );
+
+      expect(prisma.__tx.order.update).toHaveBeenCalledWith({
+        where: { id: 'o1' },
+        data: { status: OrderStatus.MESSAGE_APPROVED },
+      });
+      const reviewUpdate = prisma.__tx.messageReview.update.mock.calls[0][0];
+      expect(reviewUpdate.data.humanReviewStatus).toBe(HumanReviewStatus.APPROVED);
     });
   });
 
@@ -558,6 +733,102 @@ describe('OrdersService', () => {
         where: { id: 'paleta1' },
         data: { stock: { increment: 2 } },
       });
+    });
+  });
+
+  describe('verifyPaymentGroup', () => {
+    it('rechaza si no existe ningun pedido con ese groupId', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findMany.mockResolvedValue([]);
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await expect(
+        service.verifyPaymentGroup('g1', { userId: 'admin1', roleSlug: RoleSlug.ADMIN }, {
+          verified: true,
+        } as never),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('no verifica nada si algun pedido del grupo no puede ser verificado por ese rol (todo o nada)', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findMany.mockResolvedValue([
+        { id: 'o1', status: OrderStatus.PAYMENT_PENDING, salesChannel: SalesChannel.ONLINE },
+        { id: 'o2', status: OrderStatus.PAYMENT_PENDING, salesChannel: SalesChannel.PRESENCIAL },
+      ]);
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await expect(
+        service.verifyPaymentGroup('g1', { userId: 'admin1', roleSlug: RoleSlug.ADMIN }, {
+          verified: true,
+        } as never),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('no verifica nada si algun pedido del grupo ya fue verificado (todo o nada)', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findMany.mockResolvedValue([
+        { id: 'o1', status: OrderStatus.PAYMENT_PENDING, salesChannel: SalesChannel.ONLINE },
+        { id: 'o2', status: OrderStatus.PAYMENT_VERIFIED, salesChannel: SalesChannel.ONLINE },
+      ]);
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await expect(
+        service.verifyPaymentGroup('g1', { userId: 'admin1', roleSlug: RoleSlug.ADMIN }, {
+          verified: true,
+        } as never),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('verifica todos los pedidos del grupo en una sola operacion', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findMany
+        .mockResolvedValueOnce([
+          { id: 'o1', status: OrderStatus.PAYMENT_PENDING, salesChannel: SalesChannel.ONLINE },
+          { id: 'o2', status: OrderStatus.PAYMENT_PENDING, salesChannel: SalesChannel.ONLINE },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: 'o1',
+            orderCode: 'PM-2026-0001',
+            status: OrderStatus.PAYMENT_VERIFIED,
+            totalAmount: 1000,
+            salesChannel: SalesChannel.ONLINE,
+            createdAt: new Date(),
+            raffleNumber: null,
+            items: [],
+          },
+          {
+            id: 'o2',
+            orderCode: 'PM-2026-0002',
+            status: OrderStatus.PAYMENT_VERIFIED,
+            totalAmount: 2000,
+            salesChannel: SalesChannel.ONLINE,
+            createdAt: new Date(),
+            raffleNumber: null,
+            items: [],
+          },
+        ]);
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      const result = await service.verifyPaymentGroup(
+        'g1',
+        { userId: 'admin1', roleSlug: RoleSlug.ADMIN },
+        { verified: true } as never,
+      );
+
+      expect(prisma.__tx.order.update).toHaveBeenCalledWith({
+        where: { id: 'o1' },
+        data: { status: OrderStatus.PAYMENT_VERIFIED },
+      });
+      expect(prisma.__tx.order.update).toHaveBeenCalledWith({
+        where: { id: 'o2' },
+        data: { status: OrderStatus.PAYMENT_VERIFIED },
+      });
+      expect(prisma.__tx.paymentTransaction.update).toHaveBeenCalledTimes(2);
+      expect(result.groupId).toBe('g1');
+      expect(result.orders).toHaveLength(2);
     });
   });
 
