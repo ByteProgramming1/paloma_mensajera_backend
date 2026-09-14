@@ -11,9 +11,15 @@ export class ProductsService {
     private readonly imageStorageService: ImageStorageService,
   ) {}
 
-  create(dto: CreateProductDto) {
+  async create(dto: CreateProductDto) {
+    const lastProduct = await this.prisma.product.findFirst({ orderBy: { position: 'desc' } });
     return this.prisma.product.create({
-      data: { ...dto, isActive: dto.isActive ?? true, giftable: dto.giftable ?? true },
+      data: {
+        ...dto,
+        isActive: dto.isActive ?? true,
+        giftable: dto.giftable ?? true,
+        position: (lastProduct?.position ?? 0) + 1,
+      },
     });
   }
 
@@ -28,6 +34,7 @@ export class ProductsService {
   async findActive() {
     const products = await this.prisma.product.findMany({
       where: { isActive: true },
+      orderBy: { position: 'asc' },
       include: {
         addOnGroupLinks: {
           include: {
@@ -52,7 +59,7 @@ export class ProductsService {
   }
 
   findAll() {
-    return this.prisma.product.findMany();
+    return this.prisma.product.findMany({ orderBy: { position: 'asc' } });
   }
 
   async update(id: string, dto: UpdateProductDto) {

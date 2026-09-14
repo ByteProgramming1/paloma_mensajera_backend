@@ -128,6 +128,9 @@ model Product {
   // stand: no puede enviarse a otra persona (ej. la paleta vendida sola,
   // sin ser acompañante de un combo con destinatario distinto).
   giftable Boolean     @default(true)
+  // Orden en el catalogo: se asigna en la app (max actual + 1) al crear,
+  // igual que AddOnGroup.position, porque el id es un uuid sin orden natural.
+  position Int         @default(0)
   items    OrderItem[]
 
   // Acompañantes opcionales del producto (ej. "Elige tu carta"): un producto
