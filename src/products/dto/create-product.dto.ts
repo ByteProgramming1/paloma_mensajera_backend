@@ -42,4 +42,11 @@ export class CreateProductDto {
   @IsOptional()
   @IsString()
   imageUrl?: string;
+
+  // Reordenamiento manual excepcional (ver Product.position): normalmente se
+  // asigna solo al crear, pero esto permite corregir el orden de productos
+  // que ya existian antes de que esta columna existiera.
+  @IsOptional()
+  @IsInt()
+  position?: number;
 }
