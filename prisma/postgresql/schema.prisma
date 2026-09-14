@@ -151,6 +151,11 @@ model Product {
 model AddOnGroup {
   id           String              @id @default(uuid())
   name         String
+  // Orden de creacion: se asigna en la app (max actual + 1) al crear un grupo,
+  // y se usa para listarlos en ese mismo orden, ya que el id es un uuid sin
+  // orden natural. La migracion que agrega esta columna la rellena para las
+  // filas existentes segun su posicion fisica actual en la tabla.
+  position     Int                 @default(0)
   options      AddOnOption[]
   productLinks ProductAddOnGroup[]
 
@@ -180,6 +185,8 @@ model AddOnOption {
   name       String
   imageUrl   String?
   isActive   Boolean     @default(true)
+  // Orden de creacion dentro del grupo (ver AddOnGroup.position).
+  position   Int         @default(0)
   orderItems OrderItem[]
 
   // Si esta opcion en realidad es un producto vendible por separado (ej. la
