@@ -536,23 +536,24 @@ export class OrdersService {
     }
   }
 
-  // Regla de negocio: un producto no-giftable (ej. la paleta sola) no se
-  // puede enviar a otra persona - si el pedido no es autorrecogida, ningun
-  // item del carrito puede ser de un producto con giftable=false. El front
-  // ya fuerza selfPickup=true en ese caso, pero se valida igual aca por si
-  // alguien llama la API directamente.
+  // Regla de negocio: solo se fuerza autorrecogida cuando TODO el carrito es
+  // no-giftable (ej. solo paletas). Si hay al menos un producto giftable=true
+  // mezclado, el pedido si se puede enviar a otra persona. El front ya aplica
+  // esta misma regla (hasPickupOnlyItem = true solo si todas las lineas son
+  // giftable=false), pero se valida igual aca por si alguien llama la API
+  // directamente.
   private async assertGiftableIfNotSelfPickup(dto: CreateOrderDto) {
     if (dto.selfPickup) {
       return;
     }
 
     const productIds = [...new Set(dto.cartItems.map((item) => item.productId))];
-    const nonGiftableCount = await this.prisma.product.count({
-      where: { id: { in: productIds }, giftable: false },
+    const giftableCount = await this.prisma.product.count({
+      where: { id: { in: productIds }, giftable: true },
     });
-    if (nonGiftableCount > 0) {
+    if (giftableCount === 0) {
       throw new BadRequestException(
-        'Este pedido incluye un producto que solo se puede recoger en el stand, no se puede enviar a otra persona.',
+        'Este pedido incluye solo productos que se recogen en el stand, no se puede enviar a otra persona.',
       );
     }
   }

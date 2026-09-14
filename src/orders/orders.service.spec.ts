@@ -83,6 +83,7 @@ describe('OrdersService', () => {
 
     it('usa los datos del destinatario indicado cuando selfPickup es false', async () => {
       const prisma = buildPrismaMock();
+      prisma.product.count.mockResolvedValue(1);
       const service = new OrdersService(prisma as never, buildMailerMock() as never);
 
       await service.createPublicOrder({
@@ -128,9 +129,9 @@ describe('OrdersService', () => {
       expect(prisma.order.create).not.toHaveBeenCalled();
     });
 
-    it('rechaza si selfPickup es false y algun item es de un producto no-giftable', async () => {
+    it('rechaza si selfPickup es false y TODO el carrito es de productos no-giftable', async () => {
       const prisma = buildPrismaMock();
-      prisma.product.count.mockResolvedValue(1);
+      prisma.product.count.mockResolvedValue(0);
       const service = new OrdersService(prisma as never, buildMailerMock() as never);
 
       await expect(
@@ -143,6 +144,30 @@ describe('OrdersService', () => {
         } as never),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.order.create).not.toHaveBeenCalled();
+    });
+
+    it('permite selfPickup false si el carrito mezcla un producto no-giftable con uno giftable', async () => {
+      const prisma = buildPrismaMock();
+      prisma.product.count.mockResolvedValue(1);
+      prisma.product.findMany.mockResolvedValue([
+        { id: 'p1', price: 1000 },
+        { id: 'p2', price: 2000 },
+      ]);
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await service.createPublicOrder({
+        ...baseDto,
+        cartItems: [
+          { productId: 'p1', quantity: 1 },
+          { productId: 'p2', quantity: 1 },
+        ],
+        selfPickup: false,
+        recipientFullName: 'Otro Destino',
+        recipientCareerOrArea: 'Administracion',
+        recipientTeamsUser: 'otro@escuelaing.edu.co',
+      } as never);
+
+      expect(prisma.order.create).toHaveBeenCalled();
     });
 
     it('arranca en MESSAGE_APPROVED y sin revisor si no hay dedicatoria', async () => {
