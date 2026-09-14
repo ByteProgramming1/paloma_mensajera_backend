@@ -20,8 +20,18 @@ export class AddOnOptionsService {
       await this.assertProductExists(dto.linkedProductId);
     }
 
+    const lastOption = await this.prisma.addOnOption.findFirst({
+      where: { groupId: dto.groupId },
+      orderBy: { position: 'desc' },
+    });
+
     return this.prisma.addOnOption.create({
-      data: { groupId: dto.groupId, name: dto.name, linkedProductId: dto.linkedProductId ?? null },
+      data: {
+        groupId: dto.groupId,
+        name: dto.name,
+        linkedProductId: dto.linkedProductId ?? null,
+        position: (lastOption?.position ?? 0) + 1,
+      },
     });
   }
 
