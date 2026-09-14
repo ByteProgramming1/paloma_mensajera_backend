@@ -36,6 +36,7 @@ export class ProductsService {
                 options: {
                   where: { isActive: true },
                   include: { linkedProduct: { select: { stock: true, isActive: true } } },
+                  orderBy: { position: 'asc' },
                 },
               },
             },
