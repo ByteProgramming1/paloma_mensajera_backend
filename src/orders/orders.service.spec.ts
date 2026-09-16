@@ -26,13 +26,19 @@ function buildPrismaMock(overrides: Record<string, unknown> = {}) {
       create: jest
         .fn()
         .mockImplementation(({ data }) => Promise.resolve({ id: 'new-order', ...data })),
+      delete: jest.fn(),
     },
     orderItem: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn() },
     product: { findUnique: jest.fn(), update: jest.fn() },
     raffleNumber: { updateMany: jest.fn(), update: jest.fn() },
     paymentTransaction: { create: jest.fn(), update: jest.fn() },
     messageReview: { update: jest.fn() },
-    deliveryAssignment: { create: jest.fn(), update: jest.fn(), findFirst: jest.fn() },
+    deliveryAssignment: {
+      create: jest.fn(),
+      update: jest.fn(),
+      findFirst: jest.fn(),
+      deleteMany: jest.fn(),
+    },
     deliveryDetail: { findUnique: jest.fn(), update: jest.fn() },
   };
 
@@ -608,6 +614,22 @@ describe('OrdersService', () => {
       });
     });
 
+    it('avisa que el pedido aun no llega a la etapa de pago (distinto de "ya fue verificado")', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'o1',
+        status: OrderStatus.MESSAGE_APPROVED,
+        salesChannel: SalesChannel.PRESENCIAL,
+      });
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await expect(
+        service.verifyPayment('o1', { userId: 'seller1', roleSlug: RoleSlug.SELLER }, {
+          verified: true,
+        } as never),
+      ).rejects.toThrow('todavia no llega a la etapa de pago');
+    });
+
     it('rechaza a un Vendedor que intenta verificar un pago ONLINE', async () => {
       const prisma = buildPrismaMock();
       prisma.order.findUnique.mockResolvedValue({
@@ -829,6 +851,100 @@ describe('OrdersService', () => {
       expect(prisma.__tx.paymentTransaction.update).toHaveBeenCalledTimes(2);
       expect(result.groupId).toBe('g1');
       expect(result.orders).toHaveLength(2);
+    });
+  });
+
+  describe('deleteOrder', () => {
+    it('lanza NotFoundException si el pedido no existe', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue(null);
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await expect(service.deleteOrder('o1')).rejects.toThrow(NotFoundException);
+    });
+
+    it('rechaza borrar un pedido ya entregado', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'o1',
+        orderCode: 'PM-2026-0001',
+        status: OrderStatus.DELIVERED,
+        raffleNumber: null,
+        drawRounds: [],
+        deliveryAssignments: [],
+      });
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await expect(service.deleteOrder('o1')).rejects.toThrow(ConflictException);
+      expect(prisma.__tx.order.delete).not.toHaveBeenCalled();
+    });
+
+    it('rechaza borrar un pedido que ya participo en un sorteo', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'o1',
+        orderCode: 'PM-2026-0001',
+        status: OrderStatus.PAYMENT_VERIFIED,
+        raffleNumber: { id: 'r1' },
+        drawRounds: [{ id: 'draw1' }],
+        deliveryAssignments: [],
+      });
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await expect(service.deleteOrder('o1')).rejects.toThrow(ConflictException);
+      expect(prisma.__tx.order.delete).not.toHaveBeenCalled();
+    });
+
+    it('borra un pedido sin numero de rifa (ej. MESSAGE_APPROVED) sin tocar stock', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'o1',
+        orderCode: 'PM-2026-0019',
+        status: OrderStatus.MESSAGE_APPROVED,
+        raffleNumber: null,
+        drawRounds: [],
+        deliveryAssignments: [],
+      });
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      const result = await service.deleteOrder('o1');
+
+      expect(prisma.__tx.raffleNumber.update).not.toHaveBeenCalled();
+      expect(prisma.__tx.product.update).not.toHaveBeenCalled();
+      expect(prisma.__tx.deliveryAssignment.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.__tx.order.delete).toHaveBeenCalledWith({ where: { id: 'o1' } });
+      expect(result).toEqual({ deleted: true, orderCode: 'PM-2026-0019' });
+    });
+
+    it('al borrar un pedido con numero de rifa asignado, lo libera y repone el stock', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'o1',
+        orderCode: 'PM-2026-0002',
+        status: OrderStatus.PAYMENT_PENDING,
+        raffleNumber: { id: 'r1' },
+        drawRounds: [],
+        deliveryAssignments: [{ id: 'da1' }],
+      });
+      prisma.__tx.orderItem.findMany.mockResolvedValue([
+        { id: 'i1', productId: 'p1', quantity: 2, selectedAddOnOption: null },
+      ]);
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await service.deleteOrder('o1');
+
+      expect(prisma.__tx.raffleNumber.update).toHaveBeenCalledWith({
+        where: { id: 'r1' },
+        data: { status: 'AVAILABLE', orderId: null },
+      });
+      expect(prisma.__tx.product.update).toHaveBeenCalledWith({
+        where: { id: 'p1' },
+        data: { stock: { increment: 2 } },
+      });
+      expect(prisma.__tx.deliveryAssignment.deleteMany).toHaveBeenCalledWith({
+        where: { orderId: 'o1' },
+      });
+      expect(prisma.__tx.order.delete).toHaveBeenCalledWith({ where: { id: 'o1' } });
     });
   });
 

@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   ForbiddenException,
   Get,
   Param,
@@ -179,6 +180,16 @@ export class OrdersController {
   @Post(':id/notify-teams')
   notifyTeams(@Param('id') id: string) {
     return this.teamsNotificationService.notify(id);
+  }
+
+  // Borrado real de un pedido (no "cancelar"): exclusivo del Administrador,
+  // pensado para pedidos de prueba o creados por error - ver OrdersService.deleteOrder
+  // para las reglas de negocio (libera rifa/stock si aplica, bloquea si ya fue
+  // entregado o sorteado).
+  @RequirePermissions(Permissions.ORDERS_DELETE)
+  @Delete(':id')
+  deleteOrder(@Param('id') id: string) {
+    return this.ordersService.deleteOrder(id);
   }
 
   private assertPermission(user: AuthenticatedUser, permission: Permissions) {
