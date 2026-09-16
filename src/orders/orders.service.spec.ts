@@ -61,7 +61,7 @@ function buildPrismaMock(overrides: Record<string, unknown> = {}) {
       count: jest.fn().mockResolvedValue(0),
       create: jest.fn(),
       findUnique: jest.fn(),
-      findMany: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
     },
     user: { findUnique: jest.fn() },
     product: {
@@ -161,9 +161,11 @@ describe('OrdersService', () => {
       expect(prisma.order.create).not.toHaveBeenCalled();
     });
 
-    it('reintenta con un count fresco si el orderCode choca con el unique (carrera concurrente)', async () => {
+    it('reintenta con una lectura fresca si el orderCode choca con el unique (carrera concurrente)', async () => {
       const prisma = buildPrismaMock();
-      prisma.order.count.mockResolvedValueOnce(9).mockResolvedValueOnce(10);
+      prisma.order.findMany
+        .mockResolvedValueOnce([{ orderCode: 'PM-2026-0009' }])
+        .mockResolvedValueOnce([{ orderCode: 'PM-2026-0009' }, { orderCode: 'PM-2026-0010' }]);
       prisma.order.create
         .mockRejectedValueOnce(buildOrderCodeCollisionError())
         .mockImplementationOnce(({ data }) => Promise.resolve({ id: 'new-order', ...data }));
@@ -171,9 +173,26 @@ describe('OrdersService', () => {
 
       await service.createPublicOrder({ ...baseDto, selfPickup: true } as never);
 
-      expect(prisma.order.count).toHaveBeenCalledTimes(2);
+      expect(prisma.order.findMany).toHaveBeenCalledTimes(2);
       expect(prisma.order.create).toHaveBeenCalledTimes(2);
       expect(prisma.order.create.mock.calls[1][0].data.orderCode).toContain('0011');
+    });
+
+    it('no reutiliza un numero de secuencia ya usado por un pedido borrado (count() se hubiera equivocado aca)', async () => {
+      // Simula el caso real de produccion: se borraron pedidos 0010-0020, pero
+      // el 0040 (mas nuevo, no borrado) sigue existiendo. order.count() daria
+      // 39 -> orderSequence 40 -> choca para siempre con el 0040 existente, sin
+      // que ningun reintento lo resuelva (nadie mas esta creando en paralelo).
+      const prisma = buildPrismaMock();
+      prisma.order.findMany.mockResolvedValue([
+        { orderCode: 'PM-2026-0001' },
+        { orderCode: 'PM-2026-0040' },
+      ]);
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await service.createPublicOrder({ ...baseDto, selfPickup: true } as never);
+
+      expect(prisma.order.create.mock.calls[0][0].data.orderCode).toBe('PM-2026-0041');
     });
 
     it('rechaza si selfPickup es false y TODO el carrito es de productos no-giftable', async () => {

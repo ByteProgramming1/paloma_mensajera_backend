@@ -84,13 +84,12 @@ export class OrdersService {
     // dedicatoria este aprobada.
     const unitPrices = await this.resolveUnitPrices(dto.cartItems);
 
-    // orderSequence = count()+1 no es atomico: bajo pedidos concurrentes (o
-    // tras borrar pedidos, que baja el count) dos requests pueden calcular el
-    // mismo numero y chocar contra el unique de orderCode. En vez de un lock
-    // de secuencia (no disponible igual en Postgres y SQLite, los dos motores
-    // que soporta este proyecto), se reintenta con un count fresco cuando eso
-    // pasa: para cuando se reintenta, el pedido que gano la carrera ya quedo
-    // commiteado y el nuevo count ya lo refleja.
+    // El orderSequence sale del ultimo numero ya usado en algun orderCode
+    // (ver getLastOrderSequence), no de order.count(): borrar pedidos no debe
+    // hacer que un numero ya usado por un pedido mas viejo se vuelva a
+    // asignar. Aun asi, leer-y-crear no es atomico entre requests
+    // concurrentes, asi que se reintenta con una lectura fresca si el create
+    // choca contra el unique de orderCode.
     return this.createOrderRetryingOnCodeCollision((orderCode) =>
       this.prisma.order.create({
         data: this.buildOrderCreateInput({
@@ -124,9 +123,10 @@ export class OrdersService {
     const unitPrices = await this.resolveUnitPrices(allCartItems);
     const groupId = randomUUID();
 
-    // Mismo problema de concurrencia que createPublicOrder, pero acá se
-    // reintenta la $transaction completa (todo o nada) en vez de un solo
-    // create, para no dejar a medio grupo creado con un baseSequence viejo.
+    // Mismo criterio que createPublicOrder para el baseSequence (ver
+    // getLastOrderSequence), pero acá se reintenta la $transaction completa
+    // (todo o nada) en vez de un solo create, para no dejar a medio grupo
+    // creado con un baseSequence viejo.
     const orders = await this.createOrdersGroupRetryingOnCodeCollision((baseSequence) =>
       this.prisma.$transaction(async (tx) => {
         const created = [];
@@ -938,9 +938,30 @@ export class OrdersService {
     );
   }
 
-  // orderSequence = count()+1 no es atomico entre requests concurrentes (ver
-  // createPublicOrder). En vez de eso, se reintenta con un count fresco cada
-  // vez que el create choca contra el unique de orderCode.
+  // Ultimo numero de secuencia usado en algun orderCode existente (formato
+  // PM-{anio}-{secuencial}, ver order-code.util.ts), sin importar el anio ni
+  // si ese pedido ya fue borrado del listado. A diferencia de order.count(),
+  // esto NO baja cuando se borra un pedido (ver OrdersService.deleteOrder):
+  // usar count() como base de la secuencia hacia que, tras borrar pedidos, el
+  // siguiente pedido recalculara un numero que un pedido MAS VIEJO (no
+  // borrado) ya tenia, chocando siempre contra el mismo orderCode existente -
+  // un choque que el reintento no podia resolver porque, sin nadie mas
+  // creando pedidos en paralelo, count() nunca cambiaba entre intentos.
+  private async getLastOrderSequence(): Promise<number> {
+    const orders = await this.prisma.order.findMany({ select: { orderCode: true } });
+    return orders.reduce((max, order) => {
+      const match = order.orderCode.match(/-(\d+)$/);
+      const sequence = match ? Number(match[1]) : 0;
+      return Math.max(max, sequence);
+    }, 0);
+  }
+
+  // orderSequence basado en getLastOrderSequence()+1 sigue sin ser atomico
+  // entre requests concurrentes (ver createPublicOrder): dos requests pueden
+  // leer el mismo ultimo numero y chocar contra el unique de orderCode. Para
+  // ESE caso (carrera real, no el de arriba) si sirve reintentar con una
+  // lectura fresca, porque para cuando se reintenta el pedido que gano la
+  // carrera ya quedo commiteado y el nuevo maximo ya lo refleja.
   private async createOrderRetryingOnCodeCollision<T>(
     create: (orderCode: string) => Promise<T>,
   ): Promise<T> {
@@ -949,7 +970,7 @@ export class OrdersService {
       attempt <= OrdersService.ORDER_CODE_COLLISION_MAX_ATTEMPTS;
       attempt += 1
     ) {
-      const orderSequence = (await this.prisma.order.count()) + 1;
+      const orderSequence = (await this.getLastOrderSequence()) + 1;
       try {
         return await create(buildOrderCode(orderSequence));
       } catch (error) {
@@ -975,7 +996,7 @@ export class OrdersService {
       attempt <= OrdersService.ORDER_CODE_COLLISION_MAX_ATTEMPTS;
       attempt += 1
     ) {
-      const baseSequence = await this.prisma.order.count();
+      const baseSequence = await this.getLastOrderSequence();
       try {
         return await createGroup(baseSequence);
       } catch (error) {
