@@ -440,7 +440,18 @@ export class OrdersService {
       );
     }
     if (order.status !== OrderStatus.PAYMENT_PENDING) {
-      throw new BadRequestException('Este pedido ya fue verificado.');
+      // Mismo estado "no es PAYMENT_PENDING" puede significar dos cosas muy distintas para
+      // quien verifica: ya se resolvio antes (PAYMENT_VERIFIED/REJECTED) o todavia no llega a
+      // esa etapa (ej. un destinatario de un pago combinado que aun no elige su numero de
+      // rifa - ver verifyPaymentGroup) - el mensaje generico "ya fue verificado" confundia el
+      // segundo caso con el primero.
+      const alreadyResolved =
+        order.status === OrderStatus.PAYMENT_VERIFIED || order.status === OrderStatus.PAYMENT_REJECTED;
+      throw new BadRequestException(
+        alreadyResolved
+          ? 'Este pedido ya fue verificado.'
+          : 'Este pedido todavia no llega a la etapa de pago (falta aprobar la dedicatoria o elegir el numero de rifa).',
+      );
     }
   }
 
@@ -496,6 +507,69 @@ export class OrdersService {
         verificationNotes: dto.verificationNotes,
       },
     });
+  }
+
+  // Elimina un pedido completo (seccion "control total" del panel admin):
+  // pensado para pedidos creados por error o de prueba, no para "cancelar" un
+  // pedido real en curso. Si ya tenia numero de rifa asignado (selectRaffleNumber
+  // ya corrio y con eso desconto stock), se libera el numero y se repone el
+  // stock exactamente igual que un pago rechazado (ver applyPaymentVerificationTx);
+  // si el pedido nunca llego a esa etapa (ej. se quedo en MESSAGE_APPROVED), no
+  // hay nada que reponer porque nunca se descarto. Bloquea el borrado si el
+  // pedido ya fue entregado o ya participo en un sorteo, porque ahi ya hay un
+  // hecho fisico/historico que el registro no puede deshacer.
+  async deleteOrder(orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { raffleNumber: true, drawRounds: true, deliveryAssignments: true },
+    });
+    if (!order) {
+      throw new NotFoundException(`Pedido '${orderId}' no encontrado.`);
+    }
+    if (order.status === OrderStatus.DELIVERED) {
+      throw new ConflictException('No se puede eliminar un pedido ya entregado.');
+    }
+    if (order.drawRounds.length > 0) {
+      throw new ConflictException('Este pedido ya participo en un sorteo; no se puede eliminar.');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      if (order.raffleNumber) {
+        await tx.raffleNumber.update({
+          where: { id: order.raffleNumber.id },
+          data: { status: RaffleNumberStatus.AVAILABLE, orderId: null },
+        });
+
+        const items = await tx.orderItem.findMany({
+          where: { orderId },
+          include: { selectedAddOnOption: true },
+        });
+        for (const item of items) {
+          await tx.product.update({
+            where: { id: item.productId },
+            data: { stock: { increment: item.quantity } },
+          });
+
+          const linkedProductId = item.selectedAddOnOption?.linkedProductId;
+          if (linkedProductId) {
+            await tx.product.update({
+              where: { id: linkedProductId },
+              data: { stock: { increment: item.quantity } },
+            });
+          }
+        }
+      }
+
+      if (order.deliveryAssignments.length > 0) {
+        await tx.deliveryAssignment.deleteMany({ where: { orderId } });
+      }
+
+      // order_items, message_reviews, delivery_details y payment_transactions
+      // caen solos via onDelete: Cascade (ver schema.prisma).
+      await tx.order.delete({ where: { id: orderId } });
+    });
+
+    return { deleted: true, orderCode: order.orderCode };
   }
 
   // "Tomar" una entrega ya no es una accion aparte del Administrador: es

@@ -13,7 +13,14 @@ export class MetricsService {
         _count: { _all: true },
         _sum: { totalAmount: true },
       }),
-      this.prisma.order.aggregate({ _sum: { totalAmount: true } }),
+      // Solo pedidos con pago verificado: un pedido cancelado, rechazado o
+      // que ni siquiera ha pagado no es un ingreso real todavia (mismo
+      // criterio que "Caja fisica"/"Caja digital", ver verifiedByChannel en
+      // el frontend admin).
+      this.prisma.order.aggregate({
+        where: { paymentTransaction: { verified: true }, status: { not: 'CANCELLED' } },
+        _sum: { totalAmount: true },
+      }),
     ]);
 
     return {
