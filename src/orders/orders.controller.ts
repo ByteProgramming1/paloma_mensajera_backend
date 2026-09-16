@@ -23,6 +23,7 @@ import { SelectRaffleNumberDto } from './dto/select-raffle-number.dto';
 import { VerifyPaymentDto } from './dto/verify-payment.dto';
 import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
 import { ResubmitMessageDto } from './dto/resubmit-message.dto';
+import { AddOrderItemDto } from './dto/add-order-item.dto';
 import { FindOrdersQueryDto } from './dto/find-orders.query.dto';
 import { FindMyDeliveriesQueryDto } from './dto/find-my-deliveries.query.dto';
 
@@ -190,6 +191,15 @@ export class OrdersController {
   @Delete(':id')
   deleteOrder(@Param('id') id: string) {
     return this.ordersService.deleteOrder(id);
+  }
+
+  // Correccion manual del Administrador sobre un pedido ya creado (ej. un
+  // acompañante que el vendedor olvido incluir pero el comprador si pago) -
+  // ver OrdersService.addItem para las reglas de negocio.
+  @RequirePermissions(Permissions.ORDERS_ADD_ITEM)
+  @Post(':id/items')
+  addItem(@Param('id') id: string, @Body() dto: AddOrderItemDto) {
+    return this.ordersService.addItem(id, dto);
   }
 
   private assertPermission(user: AuthenticatedUser, permission: Permissions) {

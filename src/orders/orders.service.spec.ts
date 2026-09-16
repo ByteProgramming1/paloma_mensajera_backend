@@ -28,7 +28,7 @@ function buildPrismaMock(overrides: Record<string, unknown> = {}) {
         .mockImplementation(({ data }) => Promise.resolve({ id: 'new-order', ...data })),
       delete: jest.fn(),
     },
-    orderItem: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn() },
+    orderItem: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn(), create: jest.fn() },
     product: { findUnique: jest.fn(), update: jest.fn() },
     raffleNumber: { updateMany: jest.fn(), update: jest.fn() },
     paymentTransaction: { create: jest.fn(), update: jest.fn() },
@@ -55,7 +55,9 @@ function buildPrismaMock(overrides: Record<string, unknown> = {}) {
     product: {
       count: jest.fn().mockResolvedValue(0),
       findMany: jest.fn().mockResolvedValue([{ id: 'p1', price: 1000 }]),
+      findUnique: jest.fn(),
     },
+    addOnOption: { findUnique: jest.fn() },
     deliveryAssignment: { findFirst: jest.fn() },
     $transaction: jest.fn(async (callback: (tx: Tx) => unknown) => callback(tx)),
     __tx: tx,
@@ -945,6 +947,68 @@ describe('OrdersService', () => {
         where: { orderId: 'o1' },
       });
       expect(prisma.__tx.order.delete).toHaveBeenCalledWith({ where: { id: 'o1' } });
+    });
+  });
+
+  describe('addItem', () => {
+    it('rechaza si el producto no existe o esta inactivo', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({ id: 'o1', status: OrderStatus.PAYMENT_VERIFIED });
+      prisma.product.findUnique.mockResolvedValue(null);
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await expect(
+        service.addItem('o1', { productId: 'paleta1', quantity: 1 } as never),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('rechaza agregar un producto a un pedido cancelado o ya entregado', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({ id: 'o1', status: OrderStatus.CANCELLED });
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await expect(
+        service.addItem('o1', { productId: 'paleta1', quantity: 1 } as never),
+      ).rejects.toThrow(ConflictException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('descuenta stock, crea el item y suma el precio al totalAmount del pedido', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findUnique.mockResolvedValue({ id: 'o1', status: OrderStatus.PAYMENT_VERIFIED });
+      prisma.product.findUnique.mockResolvedValue({
+        id: 'paleta1',
+        name: 'Paleta',
+        price: 3000,
+        isActive: true,
+      });
+      prisma.__tx.product.findUnique.mockResolvedValue({
+        id: 'paleta1',
+        isActive: true,
+        stock: 5,
+      });
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await service.addItem('o1', { productId: 'paleta1', quantity: 1 } as never);
+
+      expect(prisma.__tx.product.update).toHaveBeenCalledWith({
+        where: { id: 'paleta1' },
+        data: { stock: { decrement: 1 } },
+      });
+      expect(prisma.__tx.orderItem.create).toHaveBeenCalledWith({
+        data: {
+          orderId: 'o1',
+          productId: 'paleta1',
+          quantity: 1,
+          unitPrice: 3000,
+          selectedAddOnOptionId: null,
+        },
+      });
+      expect(prisma.__tx.order.update).toHaveBeenCalledWith({
+        where: { id: 'o1' },
+        data: { totalAmount: { increment: 3000 } },
+      });
     });
   });
 
