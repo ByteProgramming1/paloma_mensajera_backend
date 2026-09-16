@@ -18,6 +18,7 @@ import { SelectRaffleNumberDto } from './dto/select-raffle-number.dto';
 import { VerifyPaymentDto } from './dto/verify-payment.dto';
 import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
 import { ResubmitMessageDto } from './dto/resubmit-message.dto';
+import { AddOrderItemDto } from './dto/add-order-item.dto';
 import { buildOrderCode } from './order-code.util';
 import {
   DeliveryAssignmentStatus,
@@ -571,6 +572,54 @@ export class OrdersService {
     });
 
     return { deleted: true, orderCode: order.orderCode };
+  }
+
+  // Agrega un producto a un pedido YA CREADO (ej. el vendedor olvido incluir
+  // un acompañante que el comprador si pago aparte): descuenta stock igual
+  // que un item normal y suma su precio vigente al totalAmount del pedido,
+  // sin importar si el pago ya fue verificado (es una correccion manual, no
+  // pasa de nuevo por verify-payment). Bloqueado en pedidos cancelados o ya
+  // entregados, donde ya no hay nada fisico que agregar.
+  async addItem(orderId: string, dto: AddOrderItemDto) {
+    const order = await this.findOrderOrThrow(orderId);
+    if (order.status === OrderStatus.CANCELLED) {
+      throw new ConflictException('No se puede agregar un producto a un pedido cancelado.');
+    }
+    if (order.status === OrderStatus.DELIVERED) {
+      throw new ConflictException('No se puede agregar un producto a un pedido ya entregado.');
+    }
+
+    const product = await this.prisma.product.findUnique({ where: { id: dto.productId } });
+    if (!product || !product.isActive) {
+      throw new BadRequestException(`El producto '${dto.productId}' no existe o no esta activo.`);
+    }
+
+    if (dto.selectedAddOnOptionId) {
+      await this.assertValidAddOnSelections([
+        {
+          productId: dto.productId,
+          quantity: dto.quantity,
+          selectedAddOnOptionId: dto.selectedAddOnOptionId,
+        },
+      ]);
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      await this.decrementProductStock(tx, dto.productId, dto.quantity);
+      await tx.orderItem.create({
+        data: {
+          orderId,
+          productId: dto.productId,
+          quantity: dto.quantity,
+          unitPrice: product.price,
+          selectedAddOnOptionId: dto.selectedAddOnOptionId ?? null,
+        },
+      });
+      return tx.order.update({
+        where: { id: orderId },
+        data: { totalAmount: { increment: product.price * dto.quantity } },
+      });
+    });
   }
 
   // "Tomar" una entrega ya no es una accion aparte del Administrador: es
