@@ -76,7 +76,6 @@ export class OrdersService {
   async createPublicOrder(dto: CreateOrderDto) {
     await this.assertValidAddOnSelections(dto.cartItems);
     await this.assertGiftableIfNotSelfPickup(dto);
-    const orderSequence = (await this.prisma.order.count()) + 1;
 
     // Snapshot del precio vigente al armar el carrito (seccion 10.2 del SDD):
     // el comprador ya conoce el precio desde este momento, no hace falta
@@ -85,16 +84,25 @@ export class OrdersService {
     // dedicatoria este aprobada.
     const unitPrices = await this.resolveUnitPrices(dto.cartItems);
 
-    return this.prisma.order.create({
-      data: this.buildOrderCreateInput({
-        orderCode: buildOrderCode(orderSequence),
-        salesChannel: dto.salesChannel,
-        assistedBySellerId: dto.assistedBySellerId,
-        buyer: dto,
-        recipient: dto,
-        unitPrices,
+    // orderSequence = count()+1 no es atomico: bajo pedidos concurrentes (o
+    // tras borrar pedidos, que baja el count) dos requests pueden calcular el
+    // mismo numero y chocar contra el unique de orderCode. En vez de un lock
+    // de secuencia (no disponible igual en Postgres y SQLite, los dos motores
+    // que soporta este proyecto), se reintenta con un count fresco cuando eso
+    // pasa: para cuando se reintenta, el pedido que gano la carrera ya quedo
+    // commiteado y el nuevo count ya lo refleja.
+    return this.createOrderRetryingOnCodeCollision((orderCode) =>
+      this.prisma.order.create({
+        data: this.buildOrderCreateInput({
+          orderCode,
+          salesChannel: dto.salesChannel,
+          assistedBySellerId: dto.assistedBySellerId,
+          buyer: dto,
+          recipient: dto,
+          unitPrices,
+        }),
       }),
-    });
+    );
   }
 
   // Un solo checkout que crea un pedido por cada destinatario (ver seccion
@@ -116,25 +124,29 @@ export class OrdersService {
     const unitPrices = await this.resolveUnitPrices(allCartItems);
     const groupId = randomUUID();
 
-    const orders = await this.prisma.$transaction(async (tx) => {
-      const baseSequence = await tx.order.count();
-      const created = [];
-      for (let index = 0; index < dto.recipients.length; index += 1) {
-        const order = await tx.order.create({
-          data: this.buildOrderCreateInput({
-            orderCode: buildOrderCode(baseSequence + index + 1),
-            salesChannel: dto.salesChannel,
-            assistedBySellerId: dto.assistedBySellerId,
-            groupId,
-            buyer: dto,
-            recipient: dto.recipients[index],
-            unitPrices,
-          }),
-        });
-        created.push(order);
-      }
-      return created;
-    });
+    // Mismo problema de concurrencia que createPublicOrder, pero acá se
+    // reintenta la $transaction completa (todo o nada) en vez de un solo
+    // create, para no dejar a medio grupo creado con un baseSequence viejo.
+    const orders = await this.createOrdersGroupRetryingOnCodeCollision((baseSequence) =>
+      this.prisma.$transaction(async (tx) => {
+        const created = [];
+        for (let index = 0; index < dto.recipients.length; index += 1) {
+          const order = await tx.order.create({
+            data: this.buildOrderCreateInput({
+              orderCode: buildOrderCode(baseSequence + index + 1),
+              salesChannel: dto.salesChannel,
+              assistedBySellerId: dto.assistedBySellerId,
+              groupId,
+              buyer: dto,
+              recipient: dto.recipients[index],
+              unitPrices,
+            }),
+          });
+          created.push(order);
+        }
+        return created;
+      }),
+    );
 
     return { groupId, orders };
   }
@@ -910,6 +922,72 @@ export class OrdersService {
       where: { id: productId },
       data: { stock: { decrement: quantity } },
     });
+  }
+
+  // Numero maximo de reintentos ante choque de orderCode (ver
+  // createOrderRetryingOnCodeCollision) - una carrera real solo necesita 1-2
+  // reintentos para resolverse; si se agotan todos es una falla real, no una
+  // carrera, y se deja propagar el error.
+  private static readonly ORDER_CODE_COLLISION_MAX_ATTEMPTS = 5;
+
+  private isOrderCodeCollision(error: unknown): boolean {
+    return (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2002' &&
+      (error.meta?.target as string[] | string | undefined)?.includes?.('orderCode') === true
+    );
+  }
+
+  // orderSequence = count()+1 no es atomico entre requests concurrentes (ver
+  // createPublicOrder). En vez de eso, se reintenta con un count fresco cada
+  // vez que el create choca contra el unique de orderCode.
+  private async createOrderRetryingOnCodeCollision<T>(
+    create: (orderCode: string) => Promise<T>,
+  ): Promise<T> {
+    for (
+      let attempt = 1;
+      attempt <= OrdersService.ORDER_CODE_COLLISION_MAX_ATTEMPTS;
+      attempt += 1
+    ) {
+      const orderSequence = (await this.prisma.order.count()) + 1;
+      try {
+        return await create(buildOrderCode(orderSequence));
+      } catch (error) {
+        if (
+          !this.isOrderCodeCollision(error) ||
+          attempt === OrdersService.ORDER_CODE_COLLISION_MAX_ATTEMPTS
+        ) {
+          throw error;
+        }
+      }
+    }
+    throw new Error('unreachable');
+  }
+
+  // Misma logica que createOrderRetryingOnCodeCollision pero para el grupo de
+  // createPublicOrdersMulti: si cualquier orderCode del grupo choca, se
+  // reintenta el grupo completo con un baseSequence fresco (todo o nada).
+  private async createOrdersGroupRetryingOnCodeCollision<T>(
+    createGroup: (baseSequence: number) => Promise<T>,
+  ): Promise<T> {
+    for (
+      let attempt = 1;
+      attempt <= OrdersService.ORDER_CODE_COLLISION_MAX_ATTEMPTS;
+      attempt += 1
+    ) {
+      const baseSequence = await this.prisma.order.count();
+      try {
+        return await createGroup(baseSequence);
+      } catch (error) {
+        if (
+          !this.isOrderCodeCollision(error) ||
+          attempt === OrdersService.ORDER_CODE_COLLISION_MAX_ATTEMPTS
+        ) {
+          throw error;
+        }
+      }
+    }
+    throw new Error('unreachable');
   }
 
   private async findOrderOrThrow(orderId: string) {

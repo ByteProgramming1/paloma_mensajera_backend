@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { OrdersService } from './orders.service';
+import { Prisma } from '../../prisma/postgresql/generated';
 import {
   BuyerType,
   HumanReviewStatus,
@@ -12,6 +13,17 @@ import {
   RoleSlug,
   SalesChannel,
 } from '../common/enums/domain.enums';
+
+function buildOrderCodeCollisionError() {
+  return new Prisma.PrismaClientKnownRequestError(
+    'Unique constraint failed on the fields: (`orderCode`)',
+    {
+      code: 'P2002',
+      clientVersion: 'test',
+      meta: { target: ['orderCode'] },
+    },
+  );
+}
 
 function buildMailerMock() {
   return { sendDeliveryConfirmation: jest.fn() };
@@ -147,6 +159,21 @@ describe('OrdersService', () => {
         service.createPublicOrder({ ...baseDto, selfPickup: true } as never),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.order.create).not.toHaveBeenCalled();
+    });
+
+    it('reintenta con un count fresco si el orderCode choca con el unique (carrera concurrente)', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.count.mockResolvedValueOnce(9).mockResolvedValueOnce(10);
+      prisma.order.create
+        .mockRejectedValueOnce(buildOrderCodeCollisionError())
+        .mockImplementationOnce(({ data }) => Promise.resolve({ id: 'new-order', ...data }));
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await service.createPublicOrder({ ...baseDto, selfPickup: true } as never);
+
+      expect(prisma.order.count).toHaveBeenCalledTimes(2);
+      expect(prisma.order.create).toHaveBeenCalledTimes(2);
+      expect(prisma.order.create.mock.calls[1][0].data.orderCode).toContain('0011');
     });
 
     it('rechaza si selfPickup es false y TODO el carrito es de productos no-giftable', async () => {
