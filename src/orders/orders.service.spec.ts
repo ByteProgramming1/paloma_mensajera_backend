@@ -33,7 +33,12 @@ function buildPrismaMock(overrides: Record<string, unknown> = {}) {
     raffleNumber: { updateMany: jest.fn(), update: jest.fn() },
     paymentTransaction: { create: jest.fn(), update: jest.fn() },
     messageReview: { update: jest.fn() },
-    deliveryAssignment: { create: jest.fn(), update: jest.fn(), findFirst: jest.fn(), deleteMany: jest.fn() },
+    deliveryAssignment: {
+      create: jest.fn(),
+      update: jest.fn(),
+      findFirst: jest.fn(),
+      deleteMany: jest.fn(),
+    },
     deliveryDetail: { findUnique: jest.fn(), update: jest.fn() },
   };
 
@@ -936,7 +941,9 @@ describe('OrdersService', () => {
         where: { id: 'p1' },
         data: { stock: { increment: 2 } },
       });
-      expect(prisma.__tx.deliveryAssignment.deleteMany).toHaveBeenCalledWith({ where: { orderId: 'o1' } });
+      expect(prisma.__tx.deliveryAssignment.deleteMany).toHaveBeenCalledWith({
+        where: { orderId: 'o1' },
+      });
       expect(prisma.__tx.order.delete).toHaveBeenCalledWith({ where: { id: 'o1' } });
     });
   });

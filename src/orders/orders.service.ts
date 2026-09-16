@@ -446,7 +446,8 @@ export class OrdersService {
       // rifa - ver verifyPaymentGroup) - el mensaje generico "ya fue verificado" confundia el
       // segundo caso con el primero.
       const alreadyResolved =
-        order.status === OrderStatus.PAYMENT_VERIFIED || order.status === OrderStatus.PAYMENT_REJECTED;
+        order.status === OrderStatus.PAYMENT_VERIFIED ||
+        order.status === OrderStatus.PAYMENT_REJECTED;
       throw new BadRequestException(
         alreadyResolved
           ? 'Este pedido ya fue verificado.'
