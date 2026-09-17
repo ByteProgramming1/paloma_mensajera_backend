@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 import { Prisma } from '../../prisma/postgresql/generated';
+import { buildOrderCode } from './order-code.util';
 import {
   BuyerType,
   HumanReviewStatus,
@@ -195,6 +196,93 @@ describe('OrdersService', () => {
       expect(prisma.order.create.mock.calls[0][0].data.orderCode).toBe('PM-2026-0041');
     });
 
+    it('si no hay pedidos aun, el primer pedido usa secuencia 1', async () => {
+      const prisma = buildPrismaMock(); // order.findMany por defecto resuelve []
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await service.createPublicOrder({ ...baseDto, selfPickup: true } as never);
+
+      expect(prisma.order.create.mock.calls[0][0].data.orderCode).toBe(buildOrderCode(1));
+    });
+
+    it('toma la secuencia mas alta sin importar el anio del orderCode (la secuencia es global, no por anio)', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findMany.mockResolvedValue([
+        { orderCode: 'PM-2025-0100' },
+        { orderCode: 'PM-2026-0002' },
+      ]);
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await service.createPublicOrder({ ...baseDto, selfPickup: true } as never);
+
+      expect(prisma.order.create.mock.calls[0][0].data.orderCode).toBe(buildOrderCode(101));
+    });
+
+    it('extrae bien la secuencia aunque tenga mas de 4 digitos (crecimiento mas alla del padding)', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findMany.mockResolvedValue([{ orderCode: 'PM-2026-12345' }]);
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await service.createPublicOrder({ ...baseDto, selfPickup: true } as never);
+
+      expect(prisma.order.create.mock.calls[0][0].data.orderCode).toBe(buildOrderCode(12346));
+    });
+
+    it('ignora un orderCode con formato inesperado sin romper el calculo del maximo', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findMany.mockResolvedValue([
+        { orderCode: 'CODIGO-INVALIDO' },
+        { orderCode: 'PM-2026-0007' },
+      ]);
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await service.createPublicOrder({ ...baseDto, selfPickup: true } as never);
+
+      expect(prisma.order.create.mock.calls[0][0].data.orderCode).toBe(buildOrderCode(8));
+    });
+
+    it('no reintenta si el error no es un choque de orderCode (se propaga de una)', async () => {
+      const prisma = buildPrismaMock();
+      const unrelatedError = new Error('DB caida');
+      prisma.order.create.mockRejectedValueOnce(unrelatedError);
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await expect(
+        service.createPublicOrder({ ...baseDto, selfPickup: true } as never),
+      ).rejects.toThrow('DB caida');
+      expect(prisma.order.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('no reintenta si el P2002 es de otro campo distinto de orderCode', async () => {
+      const prisma = buildPrismaMock();
+      const otherFieldError = new Prisma.PrismaClientKnownRequestError(
+        'Unique constraint failed on the fields: (`id`)',
+        { code: 'P2002', clientVersion: 'test', meta: { target: ['id'] } },
+      );
+      prisma.order.create.mockRejectedValueOnce(otherFieldError);
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await expect(
+        service.createPublicOrder({ ...baseDto, selfPickup: true } as never),
+      ).rejects.toBe(otherFieldError);
+      expect(prisma.order.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('si el choque de orderCode persiste (no es una carrera), agota los reintentos y propaga el error', async () => {
+      // Pedido 0040 nunca se borro: cada intento vuelve a leer el mismo
+      // maximo y vuelve a chocar - no hay carrera que un reintento resuelva.
+      const prisma = buildPrismaMock();
+      prisma.order.findMany.mockResolvedValue([{ orderCode: 'PM-2026-0040' }]);
+      prisma.order.create.mockRejectedValue(buildOrderCodeCollisionError());
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await expect(
+        service.createPublicOrder({ ...baseDto, selfPickup: true } as never),
+      ).rejects.toThrow(Prisma.PrismaClientKnownRequestError);
+      expect(prisma.order.create).toHaveBeenCalledTimes(5);
+      expect(prisma.order.findMany).toHaveBeenCalledTimes(5);
+    });
+
     it('rechaza si selfPickup es false y TODO el carrito es de productos no-giftable', async () => {
       const prisma = buildPrismaMock();
       prisma.product.count.mockResolvedValue(0);
@@ -340,6 +428,45 @@ describe('OrdersService', () => {
 
       expect(prisma.$transaction).not.toHaveBeenCalled();
       expect(prisma.__tx.order.create).not.toHaveBeenCalled();
+    });
+
+    it('reintenta el grupo completo (todo o nada) si un orderCode del grupo choca con el unique', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findMany
+        .mockResolvedValueOnce([{ orderCode: 'PM-2026-0005' }])
+        .mockResolvedValueOnce([{ orderCode: 'PM-2026-0005' }, { orderCode: 'PM-2026-0006' }]);
+      prisma.__tx.order.create
+        .mockRejectedValueOnce(buildOrderCodeCollisionError())
+        .mockImplementation(({ data }) => Promise.resolve({ id: 'new-order', ...data }));
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      const result = await service.createPublicOrdersMulti({
+        ...baseMultiDto,
+        recipients: [
+          { selfPickup: true, cartItems: [{ productId: 'p1', quantity: 1 }], isAnonymous: false },
+          { selfPickup: true, cartItems: [{ productId: 'p1', quantity: 1 }], isAnonymous: false },
+        ],
+      } as never);
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+      expect(result.orders).toHaveLength(2);
+    });
+
+    it('si el choque persiste (no es una carrera), agota los reintentos del grupo y propaga el error', async () => {
+      const prisma = buildPrismaMock();
+      prisma.order.findMany.mockResolvedValue([{ orderCode: 'PM-2026-0040' }]);
+      prisma.__tx.order.create.mockRejectedValue(buildOrderCodeCollisionError());
+      const service = new OrdersService(prisma as never, buildMailerMock() as never);
+
+      await expect(
+        service.createPublicOrdersMulti({
+          ...baseMultiDto,
+          recipients: [
+            { selfPickup: true, cartItems: [{ productId: 'p1', quantity: 1 }], isAnonymous: false },
+          ],
+        } as never),
+      ).rejects.toThrow(Prisma.PrismaClientKnownRequestError);
+      expect(prisma.$transaction).toHaveBeenCalledTimes(5);
     });
   });
 

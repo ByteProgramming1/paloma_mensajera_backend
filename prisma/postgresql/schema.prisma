@@ -231,6 +231,11 @@ model Order {
   assistedBySellerId String?
   createdAt          DateTime @default(now())
 
+  // Checklist operativo del equipo de preparacion ("listo para entregar"), NO
+  // es parte del ciclo de vida formal (OrderStatus): un pedido puede estar en
+  // cualquier estado y marcarse como listo o no, independiente de status.
+  productReady Boolean @default(false)
+
   // Vincula varios pedidos creados en un mismo checkout multi-destinatario
   // (ver POST /orders/public/multi): cada destinatario sigue siendo su propio
   // Order (dedicatoria, revision de mensaje y entrega 100% independientes),
