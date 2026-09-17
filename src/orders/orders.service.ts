@@ -19,6 +19,7 @@ import { VerifyPaymentDto } from './dto/verify-payment.dto';
 import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
 import { ResubmitMessageDto } from './dto/resubmit-message.dto';
 import { AddOrderItemDto } from './dto/add-order-item.dto';
+import { UpdateProductReadyDto } from './dto/update-product-ready.dto';
 import { buildOrderCode } from './order-code.util';
 import {
   DeliveryAssignmentStatus,
@@ -705,6 +706,17 @@ export class OrdersService {
     }
 
     return updatedAssignment;
+  }
+
+  // Checklist operativo del equipo de preparacion ("listo para entregar" en el
+  // Explorador de pedidos del admin), independiente del ciclo de vida formal
+  // (OrderStatus) - ver comentario en schema.prisma sobre Order.productReady.
+  async updateProductReady(orderId: string, dto: UpdateProductReadyDto) {
+    await this.findOrderOrThrow(orderId);
+    return this.prisma.order.update({
+      where: { id: orderId },
+      data: { productReady: dto.productReady },
+    });
   }
 
   async findAllFull() {

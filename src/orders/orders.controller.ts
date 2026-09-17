@@ -24,6 +24,7 @@ import { VerifyPaymentDto } from './dto/verify-payment.dto';
 import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
 import { ResubmitMessageDto } from './dto/resubmit-message.dto';
 import { AddOrderItemDto } from './dto/add-order-item.dto';
+import { UpdateProductReadyDto } from './dto/update-product-ready.dto';
 import { FindOrdersQueryDto } from './dto/find-orders.query.dto';
 import { FindMyDeliveriesQueryDto } from './dto/find-my-deliveries.query.dto';
 
@@ -175,6 +176,16 @@ export class OrdersController {
     @Body() dto: UpdateDeliveryStatusDto,
   ) {
     return this.ordersService.updateDeliveryStatus(id, user.userId, dto);
+  }
+
+  // Checklist operativo del equipo de preparacion ("listo para entregar" en el
+  // Explorador de pedidos del admin), independiente del ciclo de vida formal
+  // (OrderStatus) - ver OrdersService.updateProductReady. Mismo permiso que
+  // delivery-status: lo usa el mismo equipo que prepara/entrega pedidos.
+  @RequirePermissions(Permissions.ORDERS_UPDATE_DELIVERY)
+  @Patch(':id/product-ready')
+  updateProductReady(@Param('id') id: string, @Body() dto: UpdateProductReadyDto) {
+    return this.ordersService.updateProductReady(id, dto);
   }
 
   @RequirePermissions(Permissions.ORDERS_UPDATE_DELIVERY)

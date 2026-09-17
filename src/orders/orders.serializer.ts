@@ -28,6 +28,9 @@ function baseOrderFields(order: OrderWithRelations) {
     totalAmount: order.totalAmount,
     salesChannel: order.salesChannel,
     createdAt: order.createdAt,
+    // Checklist operativo del equipo de preparacion, independiente de status
+    // (ver comentario en schema.prisma sobre Order.productReady).
+    productReady: order.productReady,
     // Vincula este pedido con los demas destinatarios del mismo checkout
     // multi-destinatario (ver Order.groupId) - null para una compra normal
     // de un solo destinatario. Puramente informativo para admin/vendedor.
